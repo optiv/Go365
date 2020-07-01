@@ -104,7 +104,7 @@ _no u_
 
 After a number of queries against a target domain, results might start reporting that accounts are locked out.
 
-Once this defense is triggered, **user enumeration becomes unreliable since both valid and invalid will randomly report that their accounts have been locked out**.
+Once this defense is triggered, **user enumeration becomes unreliable since requests for valid and invalid users will randomly report that their accounts have been locked out**.
 ```
 ...
 [-] User not found: test.user90@pwnthisfakedomain.com
