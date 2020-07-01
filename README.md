@@ -20,21 +20,23 @@ Download a pre-compiled binary for your OS [HERE](https://github.com/optiv/Go365
 Download the source and compile locally.
 1. Install Go.
 2. Go get some packages:
-	```
-  go get github.com/beevik/etree
-	go get github.com/fatih/color
-	go get golang.org/x/net/proxy
+```
+go get github.com/beevik/etree
+go get github.com/fatih/color
+go get golang.org/x/net/proxy
   ```
 3. Clone the repo.
 4. Navigate to the repo and compile ya dingus.
 
-	```go build Go365.go```
+```
+go build Go365.go
+```
 5. Run the resulting binary and enjoy :)
 
 
 ## Usage
 ``` 
-$ ./Go365 -h
+$ go run ./Go365.go -h
 
   ██████         ██████   ██████  ██████
  ██                   ██ ██       ██
@@ -127,11 +129,9 @@ The defensive mechanism is **time** and **IP address** based. Go365 provides opt
 
 A wait time of AT LEAST 15 seconds is recommended. ``` -w 15```
 
-If you still get "account locked out" responses, start proxying your requests.
+If you still get "account locked out" responses, start proxying your requests. Proxy options have only been tested on SSH SOCKS5 dynamic proxies (```ssh -D <port> user@proxyserver```)
 
-Note: Proxy options have only been tested on SSH dynamic proxies. 
-
-Create a bunch of SOCKS5 proxies and make a file that looks like this:
+Create a bunch of SOCKS5 proxies on DO or AWS or Vultr or whatever and make a file that looks like this:
 ```
 127.0.0.1:8081
 127.0.0.1:8082
