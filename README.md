@@ -20,9 +20,11 @@ Download a pre-compiled binary for your OS [HERE](https://github.com/optiv/Go365
 Download the source and compile locally.
 1. Install Go.
 2. Go get some packages:
-	```go get github.com/beevik/etree
+	```
+  go get github.com/beevik/etree
 	go get github.com/fatih/color
-	go get golang.org/x/net/proxy```
+	go get golang.org/x/net/proxy
+  ```
 3. Clone the repo.
 4. Navigate to the repo and compile ya dingus.
 
@@ -117,17 +119,17 @@ Once this defense is triggered, **user enumeration becomes unreliable since both
 ```
 
 
-This is a defensive mechanism triggered by the number of **valid** user queries within a certain period of **time**. The number of attempts and the period of time will vary depending on the target domain since the thresholds can be customized by the target organization.
-
+This is a defensive mechanism triggered by the number of **valid** user queries against the target domain within a certain period of **time**. The number of attempts and the period of time will vary depending on the target domain since the thresholds can be customized by the target organization.
 
 
 ### Countering Defenses
 The defensive mechanism is **time** and **IP address** based. Go365 provides options to include a wait time between requests and proxy options to distribute the source of the requests. To circumvent the defensive mechanisms on your target domain, use a long wait time and multiple proxy servers.
 
-A wait time of 5 seconds is recommended. ``` -w 5```
+A wait time of AT LEAST 15 seconds is recommended. ``` -w 15```
+
+If you still get "account locked out" responses, start proxying your requests.
 
 Note: Proxy options have only been tested on SSH dynamic proxies. 
-
 
 Create a bunch of SOCKS5 proxies and make a file that looks like this:
 ```
@@ -141,7 +143,7 @@ Create a bunch of SOCKS5 proxies and make a file that looks like this:
 ```
 The tool will randomly iterate through the provided proxy servers and wait for the specified amount of time between requests.
 
- ```-w 5 -proxyfile ./proxies.txt```
+ ```-w 15 -proxyfile ./proxies.txt```
 
 
 ### Example
