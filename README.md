@@ -144,7 +144,3 @@ Create a bunch of SOCKS5 proxies on DO or AWS or Vultr or whatever and make a fi
 The tool will randomly iterate through the provided proxy servers and wait for the specified amount of time between requests.
 
  ```-w 15 -proxyfile ./proxies.txt```
-
-
-### Example
-Watch this tool in action! https://www.youtube.com/watch?v=b9CK37sqoz0
