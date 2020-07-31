@@ -198,6 +198,7 @@ func doTheStuff(un string, pw string, prox string) string {
 		returnString = color.GreenString("[+] Possible valid login! " + un + " : " + pw)
 		return returnString
 	}
+
 	t := xmlResponse.FindElement("//psf:text")
 	if strings.Contains(t.Text(), "AADSTS50059") {
 		fmt.Println(color.RedString("[-] Domain not found in o365 directory. Exiting..."))
@@ -205,18 +206,16 @@ func doTheStuff(un string, pw string, prox string) string {
 	} else {
 		if strings.Contains(t.Text(), "AADSTS50034") {
 			returnString = color.RedString("[-] User not found: " + un)
+		} else if strings.Contains(t.Text(), "AADSTS50126") {
+			returnString = color.YellowString("[-] Valid user, but invalid password: " + un)
+		} else if strings.Contains(t.Text(), "AADSTS50056") {
+			returnString = color.YellowString("[!] User exists, but unable to determine if the password is correct: " + un)
+		} else if strings.Contains(t.Text(), "AADSTS50053") {
+			returnString = color.MagentaString("[-] Account locked out: " + un)
+		} else if strings.Contains(t.Text(), "AADSTS50057") {
+			returnString = color.MagentaString("[-] Account disabled: " + un)
 		} else {
-			if strings.Contains(t.Text(), "AADSTS50126") {
-				returnString = color.YellowString("[-] Valid user, but invalid password: " + un)
-			} else {
-				if strings.Contains(t.Text(), "AADSTS50056") {
-					returnString = color.YellowString("[!] User exists, but unable to determine if the password is correct: " + un)
-				} else {
-					if strings.Contains(t.Text(), "AADSTS50053") {
-						returnString = color.MagentaString("[-] Account locked out: " + un)
-					} //need: add an else here as a catch-all that says "unknown error code" or something
-				}
-			}
+			returnString = color.MagentaString("[-] Unknown response. " + un + " : " + pw)
 		}
 	}
 	return returnString
