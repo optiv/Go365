@@ -55,8 +55,8 @@ const (
                               - Username with or without "@domain.com"
                               (-u legit.user)
      -ul <file>             Username list to use
-															- File should contain one username per line
-															- Usernames can have "@domain.com"
+                              - File should contain one username per line
+                              - Usernames can have "@domain.com"
                               - If no domain is specified, the -d domain is used
                               (-ul ./usernamelist.txt)
      -p <string>            Password to attempt
@@ -67,7 +67,7 @@ const (
                               - Must be used with -delay (delay)
                               (-pl ./passwordlist.txt)
      -up <file>            Userpass list to use
-															- One username and password separated by a ":" per line
+                              - One username and password separated by a ":" per line
                               - Be careful of duplicate usernames!
                               (-up ./userpasslist.txt)
      -d <string>            Domain to test
