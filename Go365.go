@@ -1,7 +1,7 @@
 /*
 Go365
 
-authors: h0useh3ad, paveway3, S4R1N
+authors: h0useh3ad, paveway3, S4R1N, EatonChips
 
 license: MIT
 
@@ -42,9 +42,9 @@ var (
 )
 
 const (
-	version = "0.1"
+	version = "0.2"
 	tool    = "Go365"
-	authors = "h0useh3ad, paveway3, S4R1N"
+	authors = "h0useh3ad, paveway3, S4R1N, EatonChips"
 	usage   = ` Usage:
      ./Go365 -ul <userlist> -p <password> -d <domain> [OPTIONS]
  Options:

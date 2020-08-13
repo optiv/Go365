@@ -41,7 +41,18 @@ go build Go365.go
 ## Usage
 
 ```
-$ go run ./Go365.go -h
+$ ./Go365 -h
+
+  ██████         ██████   ██████  ██████
+ ██                   ██ ██       ██
+ ██  ███   ████   █████  ███████  ██████
+ ██    ██ ██  ██      ██ ██    ██      ██
+  ██████   ████  ██████   ██████  ██████
+
+ Version: 0.2
+ Authors: h0useh3ad, paveway3, S4R1N, EatonChips
+
+ This tool is currently in development.
 
  Usage:
      ./Go365 -ul <userlist> -p <password> -d <domain> [OPTIONS]
