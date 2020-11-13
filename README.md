@@ -123,7 +123,7 @@ $ ./Go365 -h
 
 ## Account Locked Out! (Domain Defenses)
 
-**protip:** _You probably aren't **actually** locking out acocunts._
+**protip:** _You probably aren't **actually** locking out accounts._
 
 After a number of queries against a target domain, results might start reporting that accounts are locked out.
 
