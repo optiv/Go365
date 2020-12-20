@@ -278,8 +278,6 @@ func flagOptions() *flagVars {
 
 	flag.Parse()
 
-	fmt.Println(*flagUserPassFile)
-
 	return &flagVars{
 		flagHelp:         *flagHelp,
 		flagUsername:     *flagUsername,
