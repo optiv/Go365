@@ -215,7 +215,7 @@ func doTheStuff(un string, pw string, prox string) (string, color.Attribute) {
 		returnColor = color.FgYellow
 	} else if strings.Contains(x.Text(), "AADSTS50055") {
 		returnString = "[!] Valid user, expired password: " + un + " : " + pw
-		returnColor = color.FgGreen
+		returnColor = color.FgMagenta
 	} else if strings.Contains(x.Text(), "AADSTS50056") {
 		returnString = "[!] User exists, but unable to determine if the password is correct: " + un + " : " + pw
 		returnColor = color.FgYellow
