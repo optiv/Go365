@@ -213,6 +213,9 @@ func doTheStuff(un string, pw string, prox string) (string, color.Attribute) {
 	} else if strings.Contains(x.Text(), "AADSTS50126") {
 		returnString = "[-] Valid user, but invalid password: " + un + " : " + pw
 		returnColor = color.FgYellow
+	} else if strings.Contains(x.Text(), "AADSTS50055") {
+		returnString = "[!] Valid user, expired password: " + un + " : " + pw
+		returnColor = color.FgMagenta
 	} else if strings.Contains(x.Text(), "AADSTS50056") {
 		returnString = "[!] User exists, but unable to determine if the password is correct: " + un + " : " + pw
 		returnColor = color.FgYellow
@@ -222,8 +225,14 @@ func doTheStuff(un string, pw string, prox string) (string, color.Attribute) {
 	} else if strings.Contains(x.Text(), "AADSTS50057") {
 		returnString = "[-] Account disabled: " + un
 		returnColor = color.FgMagenta
+	} else if strings.Contains(x.Text(), "AADSTS50076") || strings.Contains(x.Text(), "AADSTS50079")
+		returnString = "[+] Possible valid login, MFA required. " + un + " : " + pw
+		returnColor = color.FgGreen
+	} else if strings.Contains(x.Text(), "AADSTS53004") {
+		returnString = "[+] Possible valid login, user must enroll in MFA. " + un + " : " + pw
+		returnColor = color.FgGreen
 	} else {
-		returnString = "[-] Unknown response. " + un + " : " + pw
+		returnString = "[!] Unknown response, run with -debug flag for more information. " + un + " : " + pw
 		returnColor = color.FgMagenta
 	}
 

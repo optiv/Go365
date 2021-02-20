@@ -14,6 +14,12 @@ Go365 is a tool designed to perform user enumeration* and password guessing atta
 
 ## Obtaining
 
+#### Option 0
+
+```
+go get -u github.com/optiv/Go365
+```
+
 #### Option 1
 
 Download a pre-compiled binary for your OS [HERE](https://github.com/optiv/Go365/releases).
