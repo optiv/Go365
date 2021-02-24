@@ -225,7 +225,7 @@ func doTheStuff(un string, pw string, prox string) (string, color.Attribute) {
 	} else if strings.Contains(x.Text(), "AADSTS50057") {
 		returnString = "[-] Account disabled: " + un
 		returnColor = color.FgMagenta
-	} else if strings.Contains(x.Text(), "AADSTS50076") || strings.Contains(x.Text(), "AADSTS50079")
+	} else if strings.Contains(x.Text(), "AADSTS50076") || strings.Contains(x.Text(), "AADSTS50079") {
 		returnString = "[+] Possible valid login, MFA required. " + un + " : " + pw
 		returnColor = color.FgGreen
 	} else if strings.Contains(x.Text(), "AADSTS53004") {
