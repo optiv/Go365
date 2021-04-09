@@ -70,11 +70,11 @@ const (
                               - One username and password separated by a ":" per line
                               - Be careful of duplicate usernames!
                               (-up ./userpasslist.txt)
-     -d <string>            Domain to test
-                              (-d testdomain.com)
     
    Optional:
-     -w <int>              Time to wait between attempts in seconds. 
+     -d <string>            Domain to test
+                              (-d testdomain.com)
+	 -w <int>              Time to wait between attempts in seconds. 
                               - Default: 1 second. 5 seconds recommended.
                               (-w 10)
      -delay <int>          Delay (in seconds) between sprays when using a password list.
@@ -401,10 +401,6 @@ func main() {
 	// -d
 	if opt.flagDomain != "" {
 		domain = fmt.Sprintf("@" + opt.flagDomain)
-	} else if len(usernameList) != 1 || !strings.Contains(usernameList[0], "@") {
-		fmt.Printf("%s\n", usage)
-		fmt.Println(color.RedString("Must provide a domain. E.g. -d testdomain.com"))
-		os.Exit(0)
 	}
 
 	// -proxy
