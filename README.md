@@ -1,5 +1,10 @@
 # Go365 v1.4
 
+Dec 6 2021 - Noticed that the AWS gateway option wasn't working properly in this last release. On my list to fix it! Busy season, so give me a couple weeks please :P
+ - paveway3
+
+
+
 **Please read all of this README before using Go365!**
 
 Go365 is a tool designed to perform user enumeration* and password guessing attacks on organizations that use Office365 (now/soon Microsoft365). Go365 uses a unique SOAP API endpoint on login.microsoftonline.com that most other tools do not use. When queried with an email address and password, the endpoint responds with an Azure AD Authentication and Authorization code. This code is then processed by Go365 and the result is printed to screen or an output file.
