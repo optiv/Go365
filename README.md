@@ -121,6 +121,11 @@ Usage:
                                 : Will append if file exists, otherwise a file is created
                                 : (-o ./Go365output.out)
 
+    -http-proxy <string>        Single HTTP proxy to use
+                                : IP address and Port separated by a ":"
+                                : Has only been tested using Burp Suite
+                                : (-http-proxy http://127.0.0.1:8080)
+
     -proxy <string>             Single proxy server to use
                                 : IP address and Port separated by a ":"
                                 : Has only been tested using SSH SOCKS5 proxies
