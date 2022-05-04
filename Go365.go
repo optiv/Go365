@@ -94,6 +94,11 @@ const (
                                 : Default: 60 minutes (3600 seconds) recommended.
                                 : (-delay 7200)
 
+    -http-proxy <string>        Single HTTP proxy to use
+                                : IP address and Port separated by a ":"
+                                : Has only been tested using Burp Suite
+                                : (-http-proxy http://127.0.0.1:8080)
+
     -o <string>                 Output file to write to
                                 : Will append if file exists, otherwise a file is created
                                 : (-o ./Go365output.out)
@@ -140,7 +145,7 @@ func wait(wt int) {
 	time.Sleep(waitTime)
 }
 
-// funtion to randomize the list of proxy servers
+// function to randomize the list of proxy servers
 func randomProxy(proxies []string) string {
 	var proxy string
 	if len(proxies) > 0 {
@@ -208,6 +213,7 @@ type flagVars struct {
 	flagUserPassFile  string
 	flagDelay         int
 	flagWaitTime      int
+	flagHttpProxy     string
 	flagProxy         string
 	flagProxyFile     string
 	flagOutFilePath   string
@@ -226,6 +232,7 @@ func flagOptions() *flagVars {
 	flagUserPassFile := flag.String("up", "", "")
 	flagDelay := flag.Int("delay", 3600, "")
 	flagWaitTime := flag.Int("w", 1, "")
+	flagHttpProxy := flag.String("http-proxy", "", "")
 	flagProxy := flag.String("proxy", "", "")
 	flagOutFilePath := flag.String("o", "", "")
 	flagProxyFile := flag.String("proxyfile", "", "")
@@ -243,6 +250,7 @@ func flagOptions() *flagVars {
 		flagUserPassFile:  *flagUserPassFile,
 		flagDelay:         *flagDelay,
 		flagWaitTime:      *flagWaitTime,
+		flagHttpProxy:     *flagHttpProxy,
 		flagProxy:         *flagProxy,
 		flagProxyFile:     *flagProxyFile,
 		flagOutFilePath:   *flagOutFilePath,
@@ -423,6 +431,7 @@ func main() {
 		os.Exit(0)
 	}
 	// -proxy
+	// socks proxy
 	if opt.flagProxy != "" {
 		proxyList = append(proxyList, opt.flagProxy)
 
@@ -518,10 +527,13 @@ func main() {
 					Timeout:   15 * time.Second,
 				}
 				// Use an http-proxy if specified
-			} else if false {
-				// TODO Use http-proxy if specified
-				// TODO Parse http-proxy value
-				proxyUrl, _ := url.Parse("http://127.0.0.1:8080")
+			} else if opt.flagHttpProxy != "" {
+				proxyUrl, err := url.Parse(opt.flagHttpProxy)
+
+				if err != nil {
+					fmt.Println("Failed to parse HTTP proxy.")
+				}
+
 				client = &http.Client{
 					Transport: &http.Transport{
 						TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
