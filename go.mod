@@ -1,4 +1,4 @@
-module github.com/eatonchips/Go365
+module github.com/optiv/Go365
 
 go 1.16
 
