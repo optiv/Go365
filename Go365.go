@@ -126,11 +126,11 @@ func wait(wt int) {
 	time.Sleep(waitTime)
 }
 
-// funtion to randomize the list of proxy servers
+// function to randomize the list of proxy servers
 func randomProxy(proxies []string) string {
 	var proxyString string
 
-	// selet a random proxy server from the list provided
+	// select a random proxy server from the list provided
 	if len(proxies) > 0 {
 		proxyString = proxies[rand.Intn(len(proxies))]
 	}

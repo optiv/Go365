@@ -6,11 +6,11 @@
 
 **Please read all of this README before using Go365!**
 
-Go365 is a tool designed to perform user enumeration* and password guessing attacks on organizations that use Office365 (now/soon Microsoft365). Go365 uses a unique SOAP API endpoint on login.microsoftonline.com that most other tools do not use. When queried with an email address and password, the endpoint responds with an Azure AD Authentication and Authorization code. This code is then processed by Go365 and the result is printed to screen or an output file.
+Go365 is a tool designed to perform user enumeration and password guessing attacks on organizations that use Office365 (now/soon Microsoft365). Go365 uses a unique SOAP API endpoint on login.microsoftonline.com that most other tools do not use. When queried with an email address and password, the endpoint responds with an Azure AD Authentication and Authorization code. This code is then processed by Go365 and the result is printed to screen or an output file.
 
-\* User enumeration is performed in conjunction with a password guess attempt. Thus, there is no specific flag or funtionality to perform only user enumeration. Instead, conduct your first password guessing attack, then parse the results for valid users.
+\* User enumeration is performed in conjunction with a password guess attempt. Thus, there is no specific flag or functionality to perform only user enumeration. Instead, conduct your first password guessing attack, then parse the results for valid users.
 
-##### Read these three bullets!
+##### Read these three bullets
 
 - This tool might not work on **all** domains that utilize o365. Tests show that it works with most federated domains. Some domains will only report valid users even if a valid password is also provided. Your results may vary!
 - The domains this tool was tested on showed that it did not actually lock out accounts after multiple password failures. Your results may vary!
