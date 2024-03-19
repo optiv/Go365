@@ -294,9 +294,12 @@ func doTheStuffGraph(un string, pw string, prox string) (string, color.Attribute
 	} else if strings.Contains(x, "50057") {
 		returnString = "[graph] [-] Account disabled: " + un
 		returnColor = color.FgMagenta
-	} else if strings.Contains(x, "50076") || strings.Contains(x, "50079") {
+	} else if strings.Contains(x, "50076") {
 		returnString = "[graph] [+] Possible valid login, MFA required. " + un + " : " + pw
 		returnColor = color.FgGreen
+	} else if strings.Contains(x, "50079") {
+			returnString = "[graph] [+] Valid login, user must enroll in MFA. " + un + " : " + pw
+			returnColor = color.FgGreen
 	} else if strings.Contains(x, "53004") {
 		returnString = "[graph] [+] Possible valid login, user must enroll in MFA. " + un + " : " + pw
 		returnColor = color.FgGreen
@@ -390,9 +393,12 @@ func doTheStuffRst(un string, pw string, prox string) (string, color.Attribute) 
 	} else if strings.Contains(x.Text(), "AADSTS50057") {
 		returnString = "[rst] [-] Account disabled: " + un
 		returnColor = color.FgMagenta
-	} else if strings.Contains(x.Text(), "AADSTS50076") || strings.Contains(x.Text(), "AADSTS50079") {
+	} else if strings.Contains(x.Text(), "AADSTS50076") {
 		returnString = "[rst] [+] Possible valid login, MFA required. " + un + " : " + pw
 		returnColor = color.FgGreen
+	} else if strings.Contains(x.Text(), "AADSTS50079") {
+			returnString = "[rst] [+] Valid login, user must enroll in MFA. " + un + " : " + pw
+			returnColor = color.FgGreen
 	} else if strings.Contains(x.Text(), "AADSTS53004") {
 		returnString = "[rst] [+] Possible valid login, user must enroll in MFA. " + un + " : " + pw
 		returnColor = color.FgGreen
